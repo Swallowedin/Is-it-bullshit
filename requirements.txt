@@ -1,0 +1,10 @@
+streamlit
+plotly
+pandas
+numpy
+PyPDF2
+openai
+requests
+python-dotenv
+sqlite3
+fpdf
