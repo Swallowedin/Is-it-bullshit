@@ -4,12 +4,14 @@ import plotly.graph_objects as go
 from datetime import datetime
 from pathlib import Path
 import json
+import PyPDF2  # Ajouté car nécessaire pour extract_text_from_pdf
 
-from config import SCORING_CRITERIA
-from db_manager import DatabaseManager
-from pappers_api import PappersAPI
-from report_analyzer import ReportAnalyzer
-from dashboard_components import Dashboard
+# Correction des imports pour inclure src/
+from src.config import SCORING_CRITERIA
+from src.db_manager import DatabaseManager
+from src.pappers_api import PappersAPI
+from src.report_analyzer import ReportAnalyzer
+from src.dashboard_components import Dashboard
 
 # Configuration de la page
 st.set_page_config(
@@ -18,6 +20,38 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Ajout de la fonction manquante extract_text_from_pdf
+def extract_text_from_pdf(pdf_file):
+    text = ""
+    try:
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        for page in pdf_reader.pages:
+            text += page.extract_text()
+        return text
+    except Exception as e:
+        st.error(f"Erreur lors de l'extraction du PDF: {str(e)}")
+        return None
+
+# Ajout de la fonction manquante get_regulatory_context
+def get_regulatory_context(company_info):
+    # Pour l'instant, retourne un contexte basique
+    return {
+        "CSRD": True,
+        "secteur": company_info.get("sector", "Non spécifié"),
+        "taille": company_info.get("size", "Non spécifiée")
+    }
+
+# Ajout de la fonction manquante generate_detailed_report
+def generate_detailed_report(analysis_results, company_info):
+    # Pour l'instant, retourne un PDF basique
+    from fpdf import FPDF
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt=f"Rapport d'analyse CSRD/DPEF", ln=1, align='C')
+    # Ajoutez plus de contenu ici
+    return pdf.output(dest='S').encode('latin-1')
 
 # Initialisation des services
 @st.cache_resource
