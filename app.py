@@ -49,14 +49,24 @@ def generate_detailed_report(analysis_results, company_info):
 # Initialisation des services
 @st.cache_resource
 def init_services():
-    db = DatabaseManager()
-    analyzer = ReportAnalyzer(st.secrets.get("OPENAI_API_KEY", "demo_key"))
-    dashboard = Dashboard()
-    return db, analyzer, dashboard
+    try:
+        db = DatabaseManager()
+        analyzer = ReportAnalyzer()  # Plus besoin de passer la clé ici
+        dashboard = Dashboard()
+        return db, analyzer, dashboard
+    except Exception as e:
+        st.error(f"Erreur d'initialisation: {str(e)}")
+        return None, None, None
 
 # Interface principale
 def main():
-    db, analyzer, dashboard = init_services()
+    services = init_services()
+    
+    if None in services:
+        st.error("Erreur: Vérifiez que la clé API est configurée dans les secrets Streamlit.")
+        return
+        
+    db, analyzer, dashboard = services
     
     # Sidebar
     with st.sidebar:
