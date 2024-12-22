@@ -1,28 +1,23 @@
-import openai
-
 class ReportAnalyzer:
-    def __init__(self, gpt_api_key, regulatory_db_path="regulatory_docs/"):
-        self.gpt_api_key = gpt_api_key
+    def __init__(self, regulatory_db_path="regulatory_docs/"):
+        self.gpt_api_key = st.secrets["OPENAI_API_KEY"]
         self.regulatory_db_path = regulatory_db_path
-        self.is_demo = (gpt_api_key == "demo_key")
-        openai.api_key = gpt_api_key
+        self.is_demo = False
+        openai.api_key = self.gpt_api_key
         
     def analyze_report(self, text, company_info, regulatory_context):
-        if self.is_demo:
-            return self._get_demo_analysis()
-        
         try:
             # Analyse initiale du texte
             analysis = self._analyze_with_gpt(text)
             
-            # Extraction des métriques clés et calcul des scores
+            # Extraction des métriques et calcul des scores
             metrics_analysis = self._extract_metrics(text)
             scores = self._calculate_scores(metrics_analysis)
             
-            # Génération des recommandations basées sur l'analyse réelle
+            # Génération des recommandations
             recommendations = self._generate_specific_recommendations(analysis, metrics_analysis)
             
-            # Extraction des sources citées dans le texte
+            # Extraction des sources
             sources = self._extract_real_sources(text)
             
             return {
@@ -34,26 +29,10 @@ class ReportAnalyzer:
         except Exception as e:
             print(f"Erreur lors de l'analyse: {str(e)}")
             return self._get_demo_analysis()
-    
+
     def _analyze_with_gpt(self, text):
         prompt = """Analyse ce rapport CSRD/DPEF et fournis une analyse détaillée selon les points suivants:
-
-1. QUALITÉ DES DONNÉES ET TRANSPARENCE:
-- Évalue la précision et la fiabilité des données présentées
-- Identifie les zones où les informations manquent de clarté ou de détail
-- Vérifie la présence d'objectifs quantifiables et leur suivi
-
-2. CONFORMITÉ ET ENGAGEMENT:
-- Évalue le respect des exigences CSRD et autres réglementations
-- Analyse la crédibilité des engagements pris
-- Identifie les lacunes potentielles dans les obligations de reporting
-
-3. IDENTIFICATION DU GREENWASHING:
-- Repère les affirmations vagues ou non étayées
-- Analyse la cohérence entre les objectifs annoncés et les actions concrètes
-- Évalue la transparence sur les impacts négatifs
-
-Fournis une analyse factuelle et critique, en citant des exemples précis du texte."""
+        [...]"""  # Votre prompt actuel
 
         try:
             response = openai.ChatCompletion.create(
