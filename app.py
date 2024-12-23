@@ -429,7 +429,7 @@ def main():
     # Initialisation de l'analyseur
     if 'analyzer' not in st.session_state:
         try:
-            st.session_state.analyzer = CSRDReportAnalyzer()
+            st.session_state.analyzer = ReportAnalyzer()
         except Exception as e:
             st.error(f"Erreur d'initialisation: {str(e)}")
             return
@@ -495,16 +495,11 @@ def main():
             if uploaded_file and company_name and not st.session_state.analysis_completed:
                 if st.button("🔍 Lancer l'analyse CSRD", use_container_width=True):
                     with st.spinner("Analyse CSRD en cours..."):
-                        # Chargement des données
                         text = extract_text_from_pdf(uploaded_file)
-                        csrd_regulation = load_csrd_regulation()
-                        
-                        if text and csrd_regulation:
-                            # Analyse
+                        if text:
                             analysis_results = st.session_state.analyzer.analyze_report(
-                                text,
-                                company_info,
-                                csrd_regulation
+                                text=text,
+                                company_info=company_info
                             )
                             st.session_state.analysis_results = analysis_results
                             st.session_state.analysis_completed = True
@@ -517,26 +512,64 @@ def main():
             analysis_results = st.session_state.analysis_results
             company_info = st.session_state.current_company_info
             
-            # Affichage détaillé
-            display_csrd_analysis(analysis_results)
+            # Affichage des résultats
+            st.subheader("Résultats de l'analyse")
             
-            # Boutons d'export et nouvelle analyse
-            col1, col2 = st.columns(2)
+            # Score global et par section
+            col1, col2, col3 = st.columns(3)
             with col1:
-                if st.button("📄 Générer rapport détaillé"):
-                    report_pdf = generate_detailed_report(analysis_results, company_info)
-                    if report_pdf:
-                        st.download_button(
-                            "⬇️ Télécharger le rapport PDF",
-                            report_pdf,
-                            file_name=f"analyse_csrd_{company_name}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf"
-                        )
-            
+                st.metric("Score global", f"{analysis_results['global_score']:.1f}/100")
             with col2:
-                if st.button("🔄 Nouvelle analyse"):
-                    reset_analysis_state()
-                    st.rerun()
+                st.metric("Conformités", f"{len(analysis_results['compliance_summary']['conforming'])}")
+            with col3:
+                st.metric("Non-conformités", f"{len(analysis_results['compliance_summary']['non_conforming'])}")
+
+            # Résultats détaillés par section
+            tabs = st.tabs(["Environmental", "Social", "Governance"])
+            sections = ["environmental", "social", "governance"]
+            
+            for tab, section in zip(tabs, sections):
+                with tab:
+                    if section in analysis_results['section_scores']:
+                        score_data = analysis_results['section_scores'][section]
+                        st.metric(
+                            f"Score {section.title()}", 
+                            f"{score_data['score']:.1f}/100",
+                            f"Pondération: {score_data['weight']:.0%}"
+                        )
+                        
+                        if section in analysis_results['detailed_analysis']:
+                            section_details = analysis_results['detailed_analysis'][section]
+                            st.write(section_details['evaluation'])
+                            
+                            with st.expander("Voir les détails"):
+                                if 'standards_analysis' in section_details:
+                                    for std, analysis in section_details['standards_analysis'].items():
+                                        st.markdown(f"**{std}**: {analysis['conformity']}")
+                                        if analysis.get('findings'):
+                                            for finding in analysis['findings']:
+                                                st.markdown(f"- {finding}")
+            
+            # Recommendations
+            st.subheader("Recommandations d'amélioration")
+            for i, rec in enumerate(analysis_results['recommendations'], 1):
+                st.markdown(f"{i}. {rec}")
+                
+            # Export PDF
+            if st.button("📄 Générer rapport détaillé"):
+                report_pdf = generate_detailed_report(analysis_results, company_info)
+                if report_pdf:
+                    st.download_button(
+                        "⬇️ Télécharger le rapport PDF",
+                        report_pdf,
+                        file_name=f"analyse_csrd_{company_name}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf"
+                    )
+            
+            # Bouton nouvelle analyse
+            if st.button("🔄 Nouvelle analyse"):
+                reset_analysis_state()
+                st.rerun()
 
     elif page == "Dashboard":
         st.title("Dashboard CSRD")
@@ -545,6 +578,3 @@ def main():
     else:  # Historique
         st.title("Historique des analyses")
         st.info("Historique en cours de développement")
-
-if __name__ == "__main__":
-    main()
