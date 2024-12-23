@@ -1,118 +1,143 @@
+# report_analyzer.py
 import streamlit as st
 from openai import OpenAI
-from datetime import datetime
-import json
 from typing import Dict, Any, List
 from pathlib import Path
+import json
+from datetime import datetime
 
-class CSRDReportAnalyzer:
-    """Analyseur avancé de rapports CSRD avec intégration de base de connaissances."""
-    
+@st.cache_data
+def load_csrd_documents():
+    """Charge les documents CSRD/ESRS"""
+    try:
+        base_path = Path("data/csrd")
+        csrd_data = {
+            "environmental": {},  # ESRS E1-E5
+            "social": {},        # ESRS S1-S4
+            "governance": {},    # ESRS G1
+            "cross_cutting": {}, # ESRS 1-2
+            "annexes": {},       # Documents annexes
+            "precisions": {}     # Précisions et Q&A
+        }
+        
+        # Parcourir tous les fichiers du dossier general
+        general_path = base_path / "general"
+        if general_path.exists():
+            for file_path in general_path.glob("*.txt"):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        
+                        # Catégoriser les fichiers selon leur préfixe
+                        name = file_path.stem
+                        if name.startswith("ESRS_E"):
+                            csrd_data["environmental"][name] = content
+                        elif name.startswith("ESRS_S"):
+                            csrd_data["social"][name] = content
+                        elif name.startswith("ESRS_G"):
+                            csrd_data["governance"][name] = content
+                        elif name.startswith("ESRS") and name[4].isdigit():
+                            csrd_data["cross_cutting"][name] = content
+                        elif name.startswith("ANNEXE"):
+                            csrd_data["annexes"][name] = content
+                        elif name in ["Questions_réponses", "precisions_esrs"]:
+                            csrd_data["precisions"][name] = content
+                        
+                except Exception as e:
+                    st.error(f"Erreur lors de la lecture de {file_path}: {str(e)}")
+        
+        return csrd_data
+
+    except Exception as e:
+        st.error(f"Erreur lors du chargement des documents ESRS: {str(e)}")
+        return None
+
+class ReportAnalyzer:
+    """Analyseur de rapports CSRD/ESRS"""
+
     def __init__(self):
-        """Initialise l'analyseur avec la configuration et la base de connaissances."""
+        """Initialise l'analyseur avec la configuration OpenAI et les documents ESRS."""
         try:
             if "OPENAI_API_KEY" not in st.secrets:
                 st.error("Clé API manquante dans les secrets Streamlit")
                 raise ValueError("Clé API manquante")
-            
+
             self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
             self.model = "gpt-4o-mini"
-            
-            # Initialisation de la base de connaissances CSRD
-            self.knowledge_base = CSRDKnowledgeBase()
-            self.regulatory_docs = self.knowledge_base.load_regulatory_documents()
-            
-            # Critères d'analyse détaillés
-            self.criteria = self.knowledge_base.detailed_criteria
-            self.scoring_matrix = self.knowledge_base.get_scoring_matrix()
-            
-        except Exception as e:
-            raise Exception(f"Erreur d'initialisation: {str(e)}")
+            self.csrd_data = load_csrd_documents()
 
-    def analyze_report(self, text: str, company_info: Dict[str, Any], csrd_text: str) -> Dict[str, Any]:
+            # Structure d'évaluation ESRS
+            self.evaluation_criteria = {
+                "environmental": {
+                    "climate": ["ESRS E1"],
+                    "pollution": ["ESRS E2"],
+                    "water": ["ESRS E3"],
+                    "biodiversity": ["ESRS E4"],
+                    "circular_economy": ["ESRS E5"]
+                },
+                "social": {
+                    "workforce": ["ESRS S1"],
+                    "communities": ["ESRS S2"],
+                    "affected_people": ["ESRS S3"],
+                    "consumers": ["ESRS S4"]
+                },
+                "governance": {
+                    "business_conduct": ["ESRS G1"]
+                }
+            }
+
+        except Exception as e:
+            raise Exception(f"Erreur d'initialisation ReportAnalyzer: {str(e)}")
+
+    def analyze_report(self, text: str, company_info: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Analyse complète d'un rapport CSRD.
+        Analyse complète d'un rapport selon les normes ESRS.
         
         Args:
-            text: Texte du rapport à analyser
+            text: Texte du rapport
             company_info: Informations sur l'entreprise
-            csrd_text: Texte de la réglementation CSRD
         """
         try:
-            # Chargement du contexte réglementaire spécifique au secteur
-            sector = company_info.get('sector', 'general')
-            sector_requirements = self.knowledge_base.load_sector_requirements(sector)
-            
-            # Préparation du contexte d'analyse
-            context = self._prepare_analysis_context(
-                company_info,
-                sector_requirements,
-                csrd_text
-            )
-            
-            # Analyse détaillée par section
+            # Analyse par section ESRS
             sections = ["environmental", "social", "governance"]
-            section_results = {}
-            
+            results = {}
+
             for section in sections:
-                results = self._analyze_section(
+                results[section] = self._analyze_section(
                     text=text,
                     section=section,
-                    context=context,
-                    criteria=self.criteria.get(section, {})
+                    company_info=company_info
                 )
-                section_results[section] = results
+
+            # Consolider les résultats
+            final_results = self._consolidate_results(results)
             
-            # Consolidation des résultats
-            final_results = self._consolidate_results(
-                section_results=section_results,
-                scoring_matrix=self.scoring_matrix
-            )
-            
-            # Ajout des métadonnées et enrichissement
+            # Enrichir avec les métadonnées
             final_results = self._enrich_results(
                 results=final_results,
-                company_info=company_info,
-                section_results=section_results
+                company_info=company_info
             )
-            
+
             return final_results
-            
+
         except Exception as e:
             st.error(f"Erreur lors de l'analyse: {str(e)}")
             return self._get_demo_analysis()
 
-    def _prepare_analysis_context(self, 
-                                company_info: Dict[str, Any],
-                                sector_requirements: Dict[str, Any],
-                                csrd_text: str) -> Dict[str, Any]:
-        """Prépare le contexte complet pour l'analyse."""
-        return {
-            "company_info": {
-                "name": company_info.get('name', ''),
-                "sector": company_info.get('sector', ''),
-                "size": company_info.get('size', ''),
-                "region": company_info.get('region', '')
-            },
-            "sector_requirements": sector_requirements,
-            "regulatory_context": csrd_text,
-            "evaluation_criteria": self.criteria,
-            "scoring_matrix": self.scoring_matrix
-        }
+    def _analyze_section(self, text: str, section: str, company_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyse une section spécifique du rapport."""
+        # Préparer le contexte réglementaire
+        regulatory_context = self._get_section_context(section)
+        criteria = self.evaluation_criteria[section]
 
-    def _analyze_section(self,
-                        text: str,
-                        section: str,
-                        context: Dict[str, Any],
-                        criteria: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Analyse détaillée d'une section spécifique.
-        """
-        # Création du prompt d'analyse spécifique à la section
-        prompt = f"""Analyser la section {section} selon les critères CSRD.
+        # Créer le prompt
+        prompt = f"""Analyser la section {section} selon les normes ESRS.
 
-CONTEXTE SECTORIEL:
-{json.dumps(context.get('sector_requirements', {}), indent=2)}
+CONTEXTE ENTREPRISE:
+{json.dumps(company_info, indent=2)}
+
+RÉFÉRENTIEL ESRS APPLICABLE:
+{regulatory_context[:2000]}
 
 CRITÈRES D'ÉVALUATION:
 {json.dumps(criteria, indent=2)}
@@ -120,37 +145,33 @@ CRITÈRES D'ÉVALUATION:
 TEXTE À ANALYSER:
 {text[:8000]}
 
-INSTRUCTIONS:
-1. Évaluer chaque critère listé
-2. Fournir des preuves textuelles pour chaque évaluation
-3. Identifier les non-conformités
-4. Proposer des recommandations d'amélioration
-
 FORMAT DE RÉPONSE (JSON):
 {{
-    "score": float,  # Score global de la section (0-100)
+    "score": float,  # Score global (0-100)
     "evaluation": string,  # Évaluation générale
-    "criteria_scores": {{
-        "critere1": {{
+    "standards_analysis": {{  # Analyse par standard ESRS
+        "standard_id": {{
             "score": float,
-            "evaluation": string,
-            "evidence": [string],
-            "compliance": string  # "conforme", "non_conforme", ou "partiel"
+            "conformity": string,
+            "findings": [string],
+            "evidence": [string]
         }}
     }},
-    "non_conformities": [string],
-    "recommendations": [string],
-    "key_findings": [string]
+    "compliance": {{
+        "conforming": [string],
+        "non_conforming": [string],
+        "partially_conforming": [string]
+    }},
+    "recommendations": [string]
 }}"""
 
-        # Appel à l'API avec contexte spécialisé
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
                         "role": "system",
-                        "content": f"Tu es un expert en analyse CSRD spécialisé dans l'analyse de la section {section}."
+                        "content": f"Tu es un expert en analyse ESRS, spécialisé dans la section {section}."
                     },
                     {"role": "user", "content": prompt}
                 ],
@@ -158,138 +179,149 @@ FORMAT DE RÉPONSE (JSON):
                 max_tokens=4000,
                 response_format={"type": "json_object"}
             )
-            
+
             return json.loads(response.choices[0].message.content)
-            
+
         except Exception as e:
             st.error(f"Erreur lors de l'analyse de la section {section}: {str(e)}")
             return {
                 "score": 0,
                 "evaluation": f"Erreur d'analyse de la section {section}",
-                "criteria_scores": {},
-                "non_conformities": [],
-                "recommendations": [],
-                "key_findings": []
+                "standards_analysis": {},
+                "compliance": {
+                    "conforming": [],
+                    "non_conforming": [],
+                    "partially_conforming": []
+                },
+                "recommendations": []
             }
 
-    def _consolidate_results(self, 
-                           section_results: Dict[str, Dict[str, Any]], 
-                           scoring_matrix: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Consolide les résultats de toutes les sections en un résultat final.
-        """
-        global_score = 0
-        detailed_scores = {}
-        all_findings = []
-        all_recommendations = []
-        non_conformities = []
+    def _get_section_context(self, section: str) -> str:
+        """Récupère le contexte réglementaire pour une section."""
+        if not self.csrd_data:
+            return ""
 
-        # Calcul des scores pondérés
-        for section, matrix in scoring_matrix.items():
-            if section in section_results:
-                section_data = section_results[section]
-                score = section_data.get('score', 0)
-                weight = matrix.get('weight', 0)
-                
-                # Score pondéré
-                global_score += score * weight
-                detailed_scores[section] = {
-                    'score': score,
-                    'weight': weight,
-                    'weighted_score': score * weight
-                }
+        relevant_texts = []
 
-                # Collecte des findings et recommandations
-                all_findings.extend(section_data.get('key_findings', []))
-                all_recommendations.extend(section_data.get('recommendations', []))
-                non_conformities.extend(section_data.get('non_conformities', []))
+        # Ajouter les textes cross-cutting
+        if "cross_cutting" in self.csrd_data:
+            relevant_texts.extend(self.csrd_data["cross_cutting"].values())
 
-        return {
-            "global_score": round(global_score, 2),
-            "detailed_scores": detailed_scores,
-            "key_findings": all_findings,
-            "recommendations": all_recommendations,
-            "non_conformities": non_conformities,
-            "section_details": section_results
+        # Ajouter les textes spécifiques à la section
+        if section in self.csrd_data:
+            relevant_texts.extend(self.csrd_data[section].values())
+
+        return "\n\n---\n\n".join(relevant_texts)
+
+    def _consolidate_results(self, section_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Consolide les résultats de toutes les sections."""
+        total_score = 0
+        weights = {
+            "environmental": 0.4,
+            "social": 0.3,
+            "governance": 0.3
         }
 
-    def _enrich_results(self,
-                       results: Dict[str, Any],
-                       company_info: Dict[str, Any],
-                       section_results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Enrichit les résultats avec des métadonnées et analyses supplémentaires.
-        """
-        # Ajout des métadonnées
+        consolidated = {
+            "global_score": 0,
+            "section_scores": {},
+            "detailed_analysis": section_results,
+            "compliance_summary": {
+                "conforming": [],
+                "non_conforming": [],
+                "partially_conforming": []
+            },
+            "key_findings": [],
+            "recommendations": []
+        }
+
+        # Calculer les scores
+        for section, results in section_results.items():
+            score = results.get("score", 0)
+            weight = weights.get(section, 0)
+            weighted_score = score * weight
+            total_score += weighted_score
+
+            consolidated["section_scores"][section] = {
+                "score": score,
+                "weighted_score": weighted_score,
+                "weight": weight
+            }
+
+            # Agréger les recommandations et non-conformités
+            consolidated["recommendations"].extend(results.get("recommendations", []))
+            if "compliance" in results:
+                consolidated["compliance_summary"]["conforming"].extend(
+                    results["compliance"].get("conforming", [])
+                )
+                consolidated["compliance_summary"]["non_conforming"].extend(
+                    results["compliance"].get("non_conforming", [])
+                )
+                consolidated["compliance_summary"]["partially_conforming"].extend(
+                    results["compliance"].get("partially_conforming", [])
+                )
+
+        consolidated["global_score"] = round(total_score, 2)
+        
+        return consolidated
+
+    def _enrich_results(self, results: Dict[str, Any], company_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Enrichit les résultats avec des métadonnées et analyses supplémentaires."""
         results["metadata"] = {
-            "analysis_date": datetime.now().isoformat(),
             "company_info": company_info,
-            "csrd_version": "2024",
-            "analysis_version": "2.0"
+            "analysis_date": datetime.now().isoformat(),
+            "esrs_version": "2024",
+            "analyzer_version": "2.0"
         }
-        
-        # Calcul des statistiques
-        stats = {
-            "total_findings": len(results["key_findings"]),
-            "total_recommendations": len(results["recommendations"]),
-            "non_conformities_count": len(results["non_conformities"]),
-            "section_scores_summary": {
-                section: data.get("score", 0)
-                for section, data in section_results.items()
-            }
+
+        # Ajouter des statistiques
+        results["statistics"] = {
+            "total_conforming": len(results["compliance_summary"]["conforming"]),
+            "total_non_conforming": len(results["compliance_summary"]["non_conforming"]),
+            "total_partial": len(results["compliance_summary"]["partially_conforming"]),
+            "total_recommendations": len(results["recommendations"])
         }
-        results["statistics"] = stats
-        
-        # Ajout d'un résumé exécutif
-        results["executive_summary"] = self._generate_executive_summary(results)
-        
+
+        # Ajouter un résumé exécutif
+        results["executive_summary"] = self._generate_summary(results)
+
         return results
 
-    def _generate_executive_summary(self, results: Dict[str, Any]) -> str:
-        """
-        Génère un résumé exécutif de l'analyse.
-        """
-        summary = (
-            f"Score global: {results['global_score']}/100\n"
-            f"Points clés: {len(results['key_findings'])} observations\n"
-            f"Non-conformités: {len(results['non_conformities'])} identifiées\n"
-            "Principales recommandations: " + 
-            "; ".join(results['recommendations'][:3]) if results['recommendations'] else "Aucune"
-        )
-        return summary
+    def _generate_summary(self, results: Dict[str, Any]) -> str:
+        """Génère un résumé exécutif des résultats."""
+        return f"""Analyse ESRS - Score global: {results['global_score']}/100
+
+Performance par section:
+- Environnement: {results['section_scores']['environmental']['score']}/100
+- Social: {results['section_scores']['social']['score']}/100
+- Gouvernance: {results['section_scores']['governance']['score']}/100
+
+Points d'attention:
+- {len(results['compliance_summary']['non_conforming'])} non-conformités identifiées
+- {len(results['compliance_summary']['partially_conforming'])} conformités partielles
+- {len(results['recommendations'])} recommandations d'amélioration"""
 
     def _get_demo_analysis(self) -> Dict[str, Any]:
-        """
-        Génère une analyse de démonstration en cas d'erreur.
-        """
+        """Retourne une analyse de démonstration."""
         return {
             "global_score": 75.5,
-            "detailed_scores": {
-                "environmental": {"score": 80, "weight": 0.4, "weighted_score": 32},
-                "social": {"score": 70, "weight": 0.3, "weighted_score": 21},
-                "governance": {"score": 75, "weight": 0.3, "weighted_score": 22.5}
+            "section_scores": {
+                "environmental": {"score": 80, "weighted_score": 32, "weight": 0.4},
+                "social": {"score": 70, "weighted_score": 21, "weight": 0.3},
+                "governance": {"score": 75, "weighted_score": 22.5, "weight": 0.3}
             },
-            "key_findings": [
-                "Bonne gouvernance climatique",
-                "Reporting scope 3 incomplet",
-                "Politique biodiversité à renforcer"
-            ],
+            "compliance_summary": {
+                "conforming": ["ESRS E1.1", "ESRS S1.1"],
+                "non_conforming": ["ESRS E2.3"],
+                "partially_conforming": ["ESRS G1.2"]
+            },
             "recommendations": [
-                "Compléter le reporting scope 3",
-                "Renforcer les objectifs biodiversité",
-                "Améliorer le suivi des fournisseurs"
+                "Renforcer le reporting sur les émissions scope 3",
+                "Améliorer la traçabilité des données sociales"
             ],
-            "non_conformities": [],
-            "section_details": {},
             "metadata": {
                 "analysis_date": datetime.now().isoformat(),
-                "csrd_version": "2024",
-                "analysis_version": "2.0"
-            },
-            "statistics": {
-                "total_findings": 3,
-                "total_recommendations": 3,
-                "non_conformities_count": 0
-            },
-            "executive_summary": "Analyse de démonstration avec un score global de 75.5/100"
+                "esrs_version": "2024",
+                "analyzer_version": "2.0"
+            }
         }
