@@ -371,16 +371,33 @@ def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dic
     from fpdf import FPDF
     
     class PDF(FPDF):
+        def __init__(self):
+            super().__init__()
+            # Ajout du support UTF-8
+            self.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
+            self.add_font('DejaVu', 'B', 'DejaVuSansCondensed-Bold.ttf', uni=True)
+            
         def header(self):
-            self.set_font('Arial', 'B', 15)
+            self.set_font('DejaVu', 'B', 15)
             self.cell(0, 10, "Rapport d'analyse CSRD/DPEF", 0, 1, 'C')
             self.ln(10)
-    
+
+        def chapter_title(self, title):
+            self.set_font('DejaVu', 'B', 12)
+            self.cell(0, 10, title, 0, 1)
+            self.ln(4)
+
+        def chapter_body(self, text):
+            self.set_font('DejaVu', '', 12)
+            self.multi_cell(0, 10, text)
+            self.ln()
+
+    # Initialisation
     pdf = PDF()
     pdf.add_page()
     
     # En-tête
-    pdf.set_font('Arial', 'B', 12)
+    pdf.set_font('DejaVu', 'B', 12)
     pdf.cell(0, 10, f"Entreprise : {company_info['name']}", 0, 1)
     pdf.cell(0, 10, f"Date : {datetime.now().strftime('%d/%m/%Y')}", 0, 1)
     pdf.cell(0, 10, f"Score global : {analysis_results['metadata']['score_global']:.1f}/100", 0, 1)
@@ -391,33 +408,26 @@ def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dic
         data = analysis_results["analysis"][section]
         
         pdf.ln(10)
-        pdf.set_font('Arial', 'B', 14)
-        pdf.cell(0, 10, section.replace('_', ' ').title(), 0, 1)
+        pdf.chapter_title(section.replace('_', ' ').title())
         
-        pdf.set_font('Arial', '', 12)
-        pdf.cell(0, 10, f"Score : {data['score']:.1f}/100", 0, 1)
-        pdf.multi_cell(0, 10, data['evaluation'])
+        # Score
+        pdf.chapter_body(f"Score : {data['score']:.1f}/100")
+        pdf.chapter_body(data['evaluation'])
         
-        pdf.ln(5)
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 10, "Points forts :", 0, 1)
-        pdf.set_font('Arial', '', 12)
+        # Points forts
+        pdf.chapter_title("Points forts :")
         for point in data['points_forts']:
-            pdf.multi_cell(0, 10, f"• {point}")
+            pdf.chapter_body("- " + point)
         
-        pdf.ln(5)
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 10, "Axes d'amélioration :", 0, 1)
-        pdf.set_font('Arial', '', 12)
+        # Axes d'amélioration
+        pdf.chapter_title("Axes d'amélioration :")
         for point in data['axes_amelioration']:
-            pdf.multi_cell(0, 10, f"• {point}")
+            pdf.chapter_body("- " + point)
     
     # Conformité
     pdf.ln(10)
-    pdf.set_font('Arial', 'B', 14)
-    pdf.cell(0, 10, "Conformité réglementaire", 0, 1)
-    pdf.set_font('Arial', '', 12)
-    pdf.multi_cell(0, 10, analysis_results['conformite']['evaluation'])
+    pdf.chapter_title("Conformité réglementaire")
+    pdf.chapter_body(analysis_results['conformite']['evaluation'])
     
     try:
         return pdf.output(dest='S').encode('latin-1', errors='replace')
