@@ -3,7 +3,7 @@ plotly
 pandas
 numpy
 PyPDF2
-openai
+openai>=1.0.0
 requests
 python-dotenv
-fpdf
+fpdf2>=2.7.0
