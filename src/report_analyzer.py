@@ -3,303 +3,298 @@ from openai import OpenAI
 from typing import Dict, Any
 import json
 
-class ReportAnalyzer:
-    def __init__(self, regulatory_db_path="regulatory_docs/"):
-        """Initialise l'analyseur de rapports."""
+import streamlit as st
+from openai import OpenAI
+from datetime import datetime
+import json
+from typing import Dict, Any, List
+from pathlib import Path
+
+class CSRDReportAnalyzer:
+    """Analyseur avancé de rapports CSRD avec intégration de base de connaissances."""
+    
+    def __init__(self):
+        """Initialise l'analyseur avec la configuration et la base de connaissances."""
         try:
             if "OPENAI_API_KEY" not in st.secrets:
                 st.error("Clé API manquante dans les secrets Streamlit")
                 raise ValueError("Clé API manquante")
-                
-            self.client = OpenAI(
-                api_key=st.secrets["OPENAI_API_KEY"]
+            
+            self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+            self.model = "gpt-4o-mini"
+            
+            # Initialisation de la base de connaissances CSRD
+            self.knowledge_base = CSRDKnowledgeBase()
+            self.regulatory_docs = self.knowledge_base.load_regulatory_documents()
+            
+            # Critères d'analyse détaillés
+            self.criteria = self.knowledge_base.detailed_criteria
+            self.scoring_matrix = self.knowledge_base.get_scoring_matrix()
+            
+        except Exception as e:
+            raise Exception(f"Erreur d'initialisation: {str(e)}")
+
+    def analyze_report(self, text: str, company_info: Dict[str, Any], csrd_text: str) -> Dict[str, Any]:
+        """
+        Analyse complète d'un rapport CSRD.
+        
+        Args:
+            text: Texte du rapport à analyser
+            company_info: Informations sur l'entreprise
+            csrd_text: Texte de la réglementation CSRD
+        """
+        try:
+            # Chargement du contexte réglementaire spécifique au secteur
+            sector = company_info.get('sector', 'general')
+            sector_requirements = self.knowledge_base.load_sector_requirements(sector)
+            
+            # Préparation du contexte d'analyse
+            context = self._prepare_analysis_context(
+                company_info,
+                sector_requirements,
+                csrd_text
             )
             
-            self.model = "gpt-4o-mini"
-            self.max_output_tokens = 16000
-            self.max_input_tokens = 128000
-            self.temperature = 0.7
+            # Analyse détaillée par section
+            sections = ["environmental", "social", "governance"]
+            section_results = {}
             
-            self.regulatory_db_path = regulatory_db_path
-            self.is_demo = False
-            
-        except Exception as e:
-            raise Exception(f"Erreur d'initialisation ReportAnalyzer: {str(e)}")
-
-    def _clean_text(self, text: str) -> str:
-        """Nettoie le texte avant l'analyse."""
-        # Enlever les caractères spéciaux et doubles espaces
-        text = " ".join(text.split())
-        # Convertir les retours à la ligne en espaces
-        text = text.replace('\n', ' ').replace('\r', ' ')
-        # Enlever les tabulations
-        text = text.replace('\t', ' ')
-        return text
-
-    def analyze_report(self, text: str, company_info: Dict[str, Any], report_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyse un rapport avec logs détaillés."""
-        try:
-            # Nettoyer le texte
-            cleaned_text = self._clean_text(text)
-            
-            # Debug: Afficher la longueur du texte extrait
-            st.write(f"Longueur du texte extrait: {len(cleaned_text)} caractères")
-            st.write("Premiers 500 caractères du texte:")
-            st.code(cleaned_text[:500])
-
-            if self.is_demo:
-                return self._get_demo_analysis()
-
-            # Préparer le prompt
-            prompt = self._prepare_analysis_prompt(cleaned_text, company_info, report_config)
-            
-            # Debug: Afficher le prompt
-            with st.expander("Voir le prompt envoyé à l'API"):
-                st.code(prompt)
-
-            try:
-                # Debug: Afficher les paramètres de l'appel API
-                st.write("Paramètres de l'appel API:")
-                st.json({
-                    "model": self.model,
-                    "temperature": self.temperature,
-                    "max_tokens": 4000,
-                })
-
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": """Analyse ce rapport CSRD/DPEF et fournis:
-1. Une analyse approfondie
-2. Des scores sur 100 pour: conformité, qualité données, engagement, transparence
-3. Des recommandations concrètes
-4. Les sources citées
-Format JSON uniquement."""},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=4000,
-                    response_format={"type": "json_object"}
+            for section in sections:
+                results = self._analyze_section(
+                    text=text,
+                    section=section,
+                    context=context,
+                    criteria=self.criteria.get(section, {})
                 )
-                
-                # Debug: Afficher la réponse brute
-                with st.expander("Voir la réponse brute de l'API"):
-                    st.code(response.model_dump_json())
-                
-                # Récupérer et parser la réponse
-                raw_content = response.choices[0].message.content
-                st.write("Contenu de la réponse:")
-                st.code(raw_content)
-                
-                analysis = self._parse_gpt_response(raw_content)
-                
-            except Exception as api_error:
-                st.error(f"Erreur API détaillée: {str(api_error)}")
-                if "rate limit" in str(api_error).lower():
-                    st.warning("Limite d'API atteinte. Réessayez dans quelques instants.")
-                elif "invalid api key" in str(api_error).lower():
-                    st.error("Clé API invalide. Vérifiez vos secrets Streamlit.")
-                return self._get_demo_analysis()
-
-            # Valider et calculer les scores
-            if "scores" in analysis:
-                analysis["scores"] = self._validate_scores(analysis["scores"])
+                section_results[section] = results
             
-            # Debug: Afficher l'analyse parsée
-            with st.expander("Voir l'analyse parsée"):
-                st.json(analysis)
-
-            scores = self._calculate_scores(analysis)
-
-            results = {
-                "analysis": analysis.get("analysis", "Analyse non disponible"),
-                "scores": {
-                    "global": scores.get("global", 0),
-                    "detailed": scores.get("detailed", {})
-                },
-                "recommendations": analysis.get("recommendations", []),
-                "sources": analysis.get("sources", [])
-            }
-
-            # Debug: Afficher les résultats finaux
-            with st.expander("Voir les résultats finaux"):
-                st.json(results)
-
-            return results
-
+            # Consolidation des résultats
+            final_results = self._consolidate_results(
+                section_results=section_results,
+                scoring_matrix=self.scoring_matrix
+            )
+            
+            # Ajout des métadonnées et enrichissement
+            final_results = self._enrich_results(
+                results=final_results,
+                company_info=company_info,
+                section_results=section_results
+            )
+            
+            return final_results
+            
         except Exception as e:
-            st.error(f"Erreur lors de l'analyse du rapport (avec détails): {str(e)}")
-            import traceback
-            st.error(f"Traceback: {traceback.format_exc()}")
+            st.error(f"Erreur lors de l'analyse: {str(e)}")
             return self._get_demo_analysis()
 
-    def _prepare_analysis_prompt(self, text: str, company_info: Dict[str, Any], report_config: Dict[str, Any]) -> str:
-        """Prépare le prompt avec plus de structure."""
-        max_text_length = 100000
-        truncated_text = text[:max_text_length] + ("..." if len(text) > max_text_length else "")
-        
-        return f"""Voici le rapport CSRD/DPEF à analyser:
+    def _prepare_analysis_context(self, 
+                                company_info: Dict[str, Any],
+                                sector_requirements: Dict[str, Any],
+                                csrd_text: str) -> Dict[str, Any]:
+        """Prépare le contexte complet pour l'analyse."""
+        return {
+            "company_info": {
+                "name": company_info.get('name', ''),
+                "sector": company_info.get('sector', ''),
+                "size": company_info.get('size', ''),
+                "region": company_info.get('region', '')
+            },
+            "sector_requirements": sector_requirements,
+            "regulatory_context": csrd_text,
+            "evaluation_criteria": self.criteria,
+            "scoring_matrix": self.scoring_matrix
+        }
 
-ENTREPRISE: {company_info['name']}
-SECTEUR: {company_info['sector']}
-TAILLE: {company_info['size']}
-TYPE: {report_config['type']}
+    def _analyze_section(self,
+                        text: str,
+                        section: str,
+                        context: Dict[str, Any],
+                        criteria: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyse détaillée d'une section spécifique.
+        """
+        # Création du prompt d'analyse spécifique à la section
+        prompt = f"""Analyser la section {section} selon les critères CSRD.
 
-CONTENU DU RAPPORT:
-{truncated_text}
+CONTEXTE SECTORIEL:
+{json.dumps(context.get('sector_requirements', {}), indent=2)}
 
-CONSIGNES D'ANALYSE:
-1. Fournir une analyse générale
-2. Évaluer sur 100 points:
-   - Conformité réglementaire CSRD/DPEF
-   - Qualité et fiabilité des données
-   - Niveau d'engagement et actions
-   - Transparence et identification des risques
-3. Lister les recommandations d'amélioration
-4. Identifier les sources principales
+CRITÈRES D'ÉVALUATION:
+{json.dumps(criteria, indent=2)}
 
-FORMAT DE RÉPONSE (JSON uniquement):
+TEXTE À ANALYSER:
+{text[:8000]}
+
+INSTRUCTIONS:
+1. Évaluer chaque critère listé
+2. Fournir des preuves textuelles pour chaque évaluation
+3. Identifier les non-conformités
+4. Proposer des recommandations d'amélioration
+
+FORMAT DE RÉPONSE (JSON):
 {{
-    "analysis": "Analyse détaillée...",
-    "scores": {{
-        "conformite": 0-100,
-        "qualite_donnees": 0-100,
-        "engagement": 0-100,
-        "transparence": 0-100
+    "score": float,  # Score global de la section (0-100)
+    "evaluation": string,  # Évaluation générale
+    "criteria_scores": {{
+        "critere1": {{
+            "score": float,
+            "evaluation": string,
+            "evidence": [string],
+            "compliance": string  # "conforme", "non_conforme", ou "partiel"
+        }}
     }},
-    "recommendations": [
-        "Recommandation 1",
-        "Recommandation 2"
-    ],
-    "sources": [
-        "Source 1",
-        "Source 2"
-    ]
+    "non_conformities": [string],
+    "recommendations": [string],
+    "key_findings": [string]
 }}"""
 
-    def _validate_scores(self, scores: Dict[str, Any]) -> Dict[str, float]:
-        """Valide et normalise les scores entre 0 et 100."""
-        validated_scores = {}
-        for k, v in scores.items():
-            try:
-                score = float(v)
-                validated_scores[k] = max(0, min(100, score))
-            except (ValueError, TypeError):
-                validated_scores[k] = 0
-        return validated_scores
-
-    def _parse_gpt_response(self, response: str) -> Dict[str, Any]:
-        """Parse la réponse avec plus de robustesse."""
+        # Appel à l'API avec contexte spécialisé
         try:
-            # Essayer d'abord le parsing JSON
-            return json.loads(response)
-        except json.JSONDecodeError:
-            st.error("Erreur de parsing JSON. Tentative de parsing textuel.")
-            st.code(response)
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"Tu es un expert en analyse CSRD spécialisé dans l'analyse de la section {section}."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=4000,
+                response_format={"type": "json_object"}
+            )
             
-            # Initialiser la structure de retour
-            analysis = {
-                "analysis": "Erreur de parsing de la réponse",
-                "scores": {
-                    "conformite": 0,
-                    "qualite_donnees": 0,
-                    "engagement": 0,
-                    "transparence": 0
-                },
-                "recommendations": [],
-                "sources": []
-            }
+            return json.loads(response.choices[0].message.content)
             
-            # Parsing textuel si le JSON échoue
-            lines = response.split('\n')
-            current_section = None
-            
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                    
-                if "Analyse" in line:
-                    current_section = "analysis"
-                    analysis["analysis"] = line.split(":", 1)[1].strip() if ":" in line else line
-                elif "Recommandation" in line:
-                    current_section = "recommendations"
-                    if ":" in line:
-                        rec = line.split(":", 1)[1].strip()
-                        if rec:
-                            analysis["recommendations"].append(rec)
-                elif "Source" in line:
-                    current_section = "sources"
-                    if ":" in line:
-                        src = line.split(":", 1)[1].strip()
-                        if src:
-                            analysis["sources"].append(src)
-                elif current_section == "recommendations" and line.startswith("-"):
-                    analysis["recommendations"].append(line[1:].strip())
-                elif current_section == "sources" and line.startswith("-"):
-                    analysis["sources"].append(line[1:].strip())
-            
-            return analysis
-
-    def _calculate_scores(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """Calcule les scores à partir de l'analyse."""
-        try:
-            raw_scores = analysis.get("scores", {})
-            
-            detailed_scores = {
-                "Conformité réglementaire": float(raw_scores.get("conformite", 0)),
-                "Qualité des données": float(raw_scores.get("qualite_donnees", 0)),
-                "Engagement et actions": float(raw_scores.get("engagement", 0)),
-                "Transparence": float(raw_scores.get("transparence", 0))
-            }
-            
-            weights = {
-                "Conformité réglementaire": 0.3,
-                "Qualité des données": 0.25,
-                "Engagement et actions": 0.25,
-                "Transparence": 0.2
-            }
-            
-            global_score = sum(score * weights[criteria] 
-                             for criteria, score in detailed_scores.items())
-            
-            return {
-                "global": round(global_score, 1),
-                "detailed": {k: round(v, 1) for k, v in detailed_scores.items()}
-            }
         except Exception as e:
-            st.warning(f"Erreur dans le calcul des scores: {str(e)}")
+            st.error(f"Erreur lors de l'analyse de la section {section}: {str(e)}")
             return {
-                "global": 0.0,
-                "detailed": {
-                    "Conformité réglementaire": 0.0,
-                    "Qualité des données": 0.0,
-                    "Engagement et actions": 0.0,
-                    "Transparence": 0.0
-                }
+                "score": 0,
+                "evaluation": f"Erreur d'analyse de la section {section}",
+                "criteria_scores": {},
+                "non_conformities": [],
+                "recommendations": [],
+                "key_findings": []
             }
+
+    def _consolidate_results(self, 
+                           section_results: Dict[str, Dict[str, Any]], 
+                           scoring_matrix: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Consolide les résultats de toutes les sections en un résultat final.
+        """
+        global_score = 0
+        detailed_scores = {}
+        all_findings = []
+        all_recommendations = []
+        non_conformities = []
+
+        # Calcul des scores pondérés
+        for section, matrix in scoring_matrix.items():
+            if section in section_results:
+                section_data = section_results[section]
+                score = section_data.get('score', 0)
+                weight = matrix.get('weight', 0)
+                
+                # Score pondéré
+                global_score += score * weight
+                detailed_scores[section] = {
+                    'score': score,
+                    'weight': weight,
+                    'weighted_score': score * weight
+                }
+
+                # Collecte des findings et recommandations
+                all_findings.extend(section_data.get('key_findings', []))
+                all_recommendations.extend(section_data.get('recommendations', []))
+                non_conformities.extend(section_data.get('non_conformities', []))
+
+        return {
+            "global_score": round(global_score, 2),
+            "detailed_scores": detailed_scores,
+            "key_findings": all_findings,
+            "recommendations": all_recommendations,
+            "non_conformities": non_conformities,
+            "section_details": section_results
+        }
+
+    def _enrich_results(self,
+                       results: Dict[str, Any],
+                       company_info: Dict[str, Any],
+                       section_results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Enrichit les résultats avec des métadonnées et analyses supplémentaires.
+        """
+        # Ajout des métadonnées
+        results["metadata"] = {
+            "analysis_date": datetime.now().isoformat(),
+            "company_info": company_info,
+            "csrd_version": "2024",
+            "analysis_version": "2.0"
+        }
+        
+        # Calcul des statistiques
+        stats = {
+            "total_findings": len(results["key_findings"]),
+            "total_recommendations": len(results["recommendations"]),
+            "non_conformities_count": len(results["non_conformities"]),
+            "section_scores_summary": {
+                section: data.get("score", 0)
+                for section, data in section_results.items()
+            }
+        }
+        results["statistics"] = stats
+        
+        # Ajout d'un résumé exécutif
+        results["executive_summary"] = self._generate_executive_summary(results)
+        
+        return results
+
+    def _generate_executive_summary(self, results: Dict[str, Any]) -> str:
+        """
+        Génère un résumé exécutif de l'analyse.
+        """
+        summary = (
+            f"Score global: {results['global_score']}/100\n"
+            f"Points clés: {len(results['key_findings'])} observations\n"
+            f"Non-conformités: {len(results['non_conformities'])} identifiées\n"
+            "Principales recommandations: " + 
+            "; ".join(results['recommendations'][:3]) if results['recommendations'] else "Aucune"
+        )
+        return summary
 
     def _get_demo_analysis(self) -> Dict[str, Any]:
-        """Retourne une analyse de démonstration en cas d'erreur."""
+        """
+        Génère une analyse de démonstration en cas d'erreur.
+        """
         return {
-            "analysis": "Ceci est une analyse exemple en mode démonstration.",
-            "scores": {
-                "global": 75.5,
-                "detailed": {
-                    "Conformité réglementaire": 80,
-                    "Qualité des données": 70,
-                    "Engagement et actions": 75,
-                    "Transparence": 77
-                }
+            "global_score": 75.5,
+            "detailed_scores": {
+                "environmental": {"score": 80, "weight": 0.4, "weighted_score": 32},
+                "social": {"score": 70, "weight": 0.3, "weighted_score": 21},
+                "governance": {"score": 75, "weight": 0.3, "weighted_score": 22.5}
             },
-            "recommendations": [
-                "Améliorer la traçabilité des données environnementales",
-                "Renforcer les objectifs quantitatifs",
-                "Détailler davantage les plans d'action"
+            "key_findings": [
+                "Bonne gouvernance climatique",
+                "Reporting scope 3 incomplet",
+                "Politique biodiversité à renforcer"
             ],
-            "sources": [
-                "Document de référence",
-                "Rapport annuel",
-                "Données internes"
-            ]
+            "recommendations": [
+                "Compléter le reporting scope 3",
+                "Renforcer les objectifs biodiversité",
+                "Améliorer le suivi des fournisseurs"
+            ],
+            "non_conformities": [],
+            "section_details": {},
+            "metadata": {
+                "analysis_date": datetime.now().isoformat(),
+                "csrd_version": "2024",
+                "analysis_version": "2.0"
+            },
+            "statistics": {
+                "total_findings": 3,
+                "total_recommendations": 3,
+                "non_conformities_count": 0
+            },
+            "executive_summary": "Analyse de démonstration avec un score global de 75.5/100"
         }
