@@ -573,6 +573,9 @@ def main():
 
     elif page == "Dashboard":
         st.title("Dashboard CSRD")
+
+if __name__ == "__main__":
+    main()
         st.info("Dashboard en cours de développement")
         
     else:  # Historique
