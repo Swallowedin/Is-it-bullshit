@@ -205,21 +205,35 @@ def show_analysis_page(db, analyzer, dashboard):
                                        type="pdf",
                                        on_change=reset_analysis_state)
     
-    # Bouton pour lancer l'analyse
-    if uploaded_file and company_name and not st.session_state.analysis_completed:
-        if st.button("Lancer l'analyse"):
-            with st.spinner("Analyse en cours..."):
-                # Extraction et analyse
-                text = extract_text_from_pdf(uploaded_file)
-                if text:
-                    analysis_results = analyzer.analyze_report(
-                        text,
-                        company_info,
-                        {"type": "CSRD"}
-                    )
-                    st.session_state.analysis_results = analysis_results
-                    st.session_state.analysis_completed = True
-                    st.experimental_rerun()
+    # Messages de guidage
+    if not company_name:
+        st.info("👆 Commencez par entrer le nom de l'entreprise")
+    elif not uploaded_file:
+        st.info("👆 Uploadez maintenant le rapport PDF à analyser")
+    
+    # Zone du bouton d'analyse bien séparée
+    st.markdown("---")
+    analyze_col1, analyze_col2, analyze_col3 = st.columns([1, 2, 1])
+    
+    with analyze_col2:
+        # Bouton pour lancer l'analyse
+        if uploaded_file and company_name:
+            if not st.session_state.analysis_completed:
+                if st.button("🔍 Lancer l'analyse", use_container_width=True):
+                    with st.spinner("Analyse en cours..."):
+                        # Extraction et analyse
+                        text = extract_text_from_pdf(uploaded_file)
+                        if text:
+                            analysis_results = analyzer.analyze_report(
+                                text,
+                                company_info,
+                                {"type": "CSRD"}
+                            )
+                            st.session_state.analysis_results = analysis_results
+                            st.session_state.analysis_completed = True
+                            st.rerun()  # Nouveau !
+    
+    st.markdown("---")
     
     # Affichage des résultats si l'analyse est terminée
     if st.session_state.analysis_completed and st.session_state.analysis_results:
@@ -250,20 +264,24 @@ def show_analysis_page(db, analyzer, dashboard):
         for source in analysis_results['sources']:
             st.markdown(f"- {source}")
         
-        # Export
-        if st.button("Générer rapport détaillé"):
-            report_pdf = generate_detailed_report(analysis_results, company_info)
-            st.download_button(
-                "Télécharger le rapport PDF",
-                report_pdf,
-                file_name=f"analyse_csrd_{company_name}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf"
-            )
+        # Export et nouvelle analyse sur la même ligne
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📄 Générer rapport détaillé"):
+                report_pdf = generate_detailed_report(analysis_results, company_info)
+                if report_pdf:
+                    st.download_button(
+                        "⬇️ Télécharger le rapport PDF",
+                        report_pdf,
+                        file_name=f"analyse_csrd_{company_name}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf"
+                    )
         
-        # Bouton pour relancer une analyse
-        if st.button("Nouvelle analyse"):
-            reset_analysis_state()
-            st.experimental_rerun()
+        with col2:
+            # Bouton pour relancer une analyse
+            if st.button("🔄 Nouvelle analyse"):
+                reset_analysis_state()
+                st.rerun()  # Nouveau !
 
 
 def show_dashboard_page(db, dashboard):
