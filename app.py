@@ -19,14 +19,82 @@ st.set_page_config(
 
 # Lecture et cache de la réglementation CSRD
 @st.cache_data
-def load_csrd_regulation():
+def load_csrd_documents():
+    """Charge les documents CSRD/ESRS"""
     try:
-        with open('data/csrd_regulation.txt', 'r', encoding='utf-8') as f:
-            return f.read()
-    except Exception as e:
-        st.error(f"Erreur lors du chargement de la réglementation CSRD: {str(e)}")
-        return ""
+        base_path = Path("data/csrd")
+        csrd_data = {
+            "environmental": {},  # ESRS E1-E5
+            "social": {},        # ESRS S1-S4
+            "governance": {},    # ESRS G1
+            "cross_cutting": {}, # ESRS 1-2
+            "annexes": {},       # Documents annexes
+            "precisions": {}     # Précisions et Q&A
+        }
+        
+        # Parcourir tous les fichiers du dossier general
+        general_path = base_path / "general"
+        if general_path.exists():
+            for file_path in general_path.glob("*.txt"):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        
+                        # Catégoriser les fichiers selon leur préfixe
+                        name = file_path.stem
+                        if name.startswith("ESRS_E"):
+                            csrd_data["environmental"][name] = content
+                        elif name.startswith("ESRS_S"):
+                            csrd_data["social"][name] = content
+                        elif name.startswith("ESRS_G"):
+                            csrd_data["governance"][name] = content
+                        elif name.startswith("ESRS") and name[4].isdigit():
+                            csrd_data["cross_cutting"][name] = content
+                        elif name.startswith("ANNEXE"):
+                            csrd_data["annexes"][name] = content
+                        elif name in ["Questions_réponses", "precisions_esrs"]:
+                            csrd_data["precisions"][name] = content
+                        
+                except Exception as e:
+                    st.error(f"Erreur lors de la lecture de {file_path}: {str(e)}")
+        
+        # Vérifier le chargement
+        total_docs = sum(len(files) for files in csrd_data.values())
+        if total_docs == 0:
+            st.warning("Aucun document ESRS trouvé dans data/csrd/general")
+        else:
+            st.success(f"{total_docs} documents ESRS chargés :\n" + 
+                      f"- Environmental: {len(csrd_data['environmental'])} docs\n" +
+                      f"- Social: {len(csrd_data['social'])} docs\n" +
+                      f"- Governance: {len(csrd_data['governance'])} docs\n" +
+                      f"- Cross-cutting: {len(csrd_data['cross_cutting'])} docs")
+        
+        return csrd_data
 
+    except Exception as e:
+        st.error(f"Erreur lors du chargement des documents ESRS: {str(e)}")
+        return None
+
+def get_regulatory_context(csrd_data: Dict[str, Dict[str, str]], section: str) -> str:
+    """Récupère le contexte réglementaire pour une section donnée."""
+    if not csrd_data:
+        return ""
+        
+    relevant_docs = []
+    
+    # Ajouter les documents cross-cutting
+    if section in ["environmental", "social", "governance"]:
+        relevant_docs.extend(csrd_data["cross_cutting"].values())
+    
+    # Ajouter les documents spécifiques à la section
+    if section in csrd_data:
+        relevant_docs.extend(csrd_data[section].values())
+    
+    # Ajouter les précisions pertinentes
+    if "precisions" in csrd_data:
+        relevant_docs.extend(csrd_data["precisions"].values())
+        
+    return "\n\n---\n\n".join(relevant_docs)
 def extract_text_from_pdf(pdf_file):
     """Extrait le texte d'un fichier PDF."""
     text = ""
