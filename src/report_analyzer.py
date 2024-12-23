@@ -5,6 +5,7 @@ import json
 
 class ReportAnalyzer:
     def __init__(self, regulatory_db_path="regulatory_docs/"):
+        """Initialise l'analyseur de rapports."""
         try:
             if "OPENAI_API_KEY" not in st.secrets:
                 st.error("Clé API manquante dans les secrets Streamlit")
@@ -25,19 +26,32 @@ class ReportAnalyzer:
         except Exception as e:
             raise Exception(f"Erreur d'initialisation ReportAnalyzer: {str(e)}")
 
+    def _clean_text(self, text: str) -> str:
+        """Nettoie le texte avant l'analyse."""
+        # Enlever les caractères spéciaux et doubles espaces
+        text = " ".join(text.split())
+        # Convertir les retours à la ligne en espaces
+        text = text.replace('\n', ' ').replace('\r', ' ')
+        # Enlever les tabulations
+        text = text.replace('\t', ' ')
+        return text
+
     def analyze_report(self, text: str, company_info: Dict[str, Any], report_config: Dict[str, Any]) -> Dict[str, Any]:
         """Analyse un rapport avec logs détaillés."""
         try:
+            # Nettoyer le texte
+            cleaned_text = self._clean_text(text)
+            
             # Debug: Afficher la longueur du texte extrait
-            st.write(f"Longueur du texte extrait: {len(text)} caractères")
+            st.write(f"Longueur du texte extrait: {len(cleaned_text)} caractères")
             st.write("Premiers 500 caractères du texte:")
-            st.code(text[:500])
+            st.code(cleaned_text[:500])
 
             if self.is_demo:
                 return self._get_demo_analysis()
 
             # Préparer le prompt
-            prompt = self._prepare_analysis_prompt(text, company_info, report_config)
+            prompt = self._prepare_analysis_prompt(cleaned_text, company_info, report_config)
             
             # Debug: Afficher le prompt
             with st.expander("Voir le prompt envoyé à l'API"):
@@ -81,8 +95,16 @@ Format JSON uniquement."""},
                 
             except Exception as api_error:
                 st.error(f"Erreur API détaillée: {str(api_error)}")
+                if "rate limit" in str(api_error).lower():
+                    st.warning("Limite d'API atteinte. Réessayez dans quelques instants.")
+                elif "invalid api key" in str(api_error).lower():
+                    st.error("Clé API invalide. Vérifiez vos secrets Streamlit.")
                 return self._get_demo_analysis()
 
+            # Valider et calculer les scores
+            if "scores" in analysis:
+                analysis["scores"] = self._validate_scores(analysis["scores"])
+            
             # Debug: Afficher l'analyse parsée
             with st.expander("Voir l'analyse parsée"):
                 st.json(analysis)
@@ -155,15 +177,28 @@ FORMAT DE RÉPONSE (JSON uniquement):
     ]
 }}"""
 
+    def _validate_scores(self, scores: Dict[str, Any]) -> Dict[str, float]:
+        """Valide et normalise les scores entre 0 et 100."""
+        validated_scores = {}
+        for k, v in scores.items():
+            try:
+                score = float(v)
+                validated_scores[k] = max(0, min(100, score))
+            except (ValueError, TypeError):
+                validated_scores[k] = 0
+        return validated_scores
+
     def _parse_gpt_response(self, response: str) -> Dict[str, Any]:
         """Parse la réponse avec plus de robustesse."""
         try:
+            # Essayer d'abord le parsing JSON
             return json.loads(response)
         except json.JSONDecodeError:
-            st.error("Erreur de parsing JSON. Réponse brute:")
+            st.error("Erreur de parsing JSON. Tentative de parsing textuel.")
             st.code(response)
-            # Retourner une structure minimale en cas d'erreur
-            return {
+            
+            # Initialiser la structure de retour
+            analysis = {
                 "analysis": "Erreur de parsing de la réponse",
                 "scores": {
                     "conformite": 0,
@@ -175,6 +210,7 @@ FORMAT DE RÉPONSE (JSON uniquement):
                 "sources": []
             }
             
+            # Parsing textuel si le JSON échoue
             lines = response.split('\n')
             current_section = None
             
