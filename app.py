@@ -184,61 +184,94 @@ def main():
 def show_analysis_page(db, analyzer, dashboard):
     st.title("Analyse de rapport CSRD/DPEF")
     
+    # Initialisation du state si nécessaire
+    if 'analysis_completed' not in st.session_state:
+        st.session_state.analysis_completed = False
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = None
+    if 'current_company_info' not in st.session_state:
+        st.session_state.current_company_info = None
+    
+    # Reset le state si on change d'entreprise ou de fichier
+    def reset_analysis_state():
+        st.session_state.analysis_completed = False
+        st.session_state.analysis_results = None
+    
     # Informations entreprise et upload fichier
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        company_name = st.text_input("Nom de l'entreprise")
+        company_name = st.text_input("Nom de l'entreprise", 
+                                   on_change=reset_analysis_state)
         if company_name:
             company_info = get_company_context(company_name)
+            st.session_state.current_company_info = company_info
     
     with col2:
-        uploaded_file = st.file_uploader("Rapport CSRD/DPEF (PDF)", type="pdf")
+        uploaded_file = st.file_uploader("Rapport CSRD/DPEF (PDF)", 
+                                       type="pdf",
+                                       on_change=reset_analysis_state)
     
-    if uploaded_file and company_name:
-        with st.spinner("Analyse en cours..."):
-            # Extraction et analyse
-            text = extract_text_from_pdf(uploaded_file)
-            if text:
-                analysis_results = analyzer.analyze_report(
-                    text,
-                    company_info,
-                    {"type": "CSRD"}
-                )
-                
-                # Affichage des résultats
-                st.subheader("Résultats de l'analyse")
-                
-                # Scores
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Score global", f"{analysis_results['scores']['global']:.1f}/100")
-                    fig = dashboard.create_score_radar(analysis_results['scores']['detailed'])
-                    st.plotly_chart(fig)
-                
-                with col2:
-                    st.subheader("Points clés")
-                    st.write(analysis_results['analysis'])
-                
-                # Recommandations
-                st.subheader("Recommandations d'amélioration")
-                for i, rec in enumerate(analysis_results['recommendations'], 1):
-                    st.markdown(f"{i}. {rec}")
-                
-                # Sources citées
-                st.subheader("Sources citées")
-                for source in analysis_results['sources']:
-                    st.markdown(f"- {source}")
-                
-                # Export
-                if st.button("Générer rapport détaillé"):
-                    report_pdf = generate_detailed_report(analysis_results, company_info)
-                    st.download_button(
-                        "Télécharger le rapport PDF",
-                        report_pdf,
-                        file_name=f"analyse_csrd_{company_name}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                        mime="application/pdf"
+    # Bouton pour lancer l'analyse
+    if uploaded_file and company_name and not st.session_state.analysis_completed:
+        if st.button("Lancer l'analyse"):
+            with st.spinner("Analyse en cours..."):
+                # Extraction et analyse
+                text = extract_text_from_pdf(uploaded_file)
+                if text:
+                    analysis_results = analyzer.analyze_report(
+                        text,
+                        company_info,
+                        {"type": "CSRD"}
                     )
+                    st.session_state.analysis_results = analysis_results
+                    st.session_state.analysis_completed = True
+                    st.experimental_rerun()
+    
+    # Affichage des résultats si l'analyse est terminée
+    if st.session_state.analysis_completed and st.session_state.analysis_results:
+        analysis_results = st.session_state.analysis_results
+        company_info = st.session_state.current_company_info
+        
+        # Affichage des résultats
+        st.subheader("Résultats de l'analyse")
+        
+        # Scores
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Score global", f"{analysis_results['scores']['global']:.1f}/100")
+            fig = dashboard.create_score_radar(analysis_results['scores']['detailed'])
+            st.plotly_chart(fig)
+        
+        with col2:
+            st.subheader("Points clés")
+            st.write(analysis_results['analysis'])
+        
+        # Recommandations
+        st.subheader("Recommandations d'amélioration")
+        for i, rec in enumerate(analysis_results['recommendations'], 1):
+            st.markdown(f"{i}. {rec}")
+        
+        # Sources citées
+        st.subheader("Sources citées")
+        for source in analysis_results['sources']:
+            st.markdown(f"- {source}")
+        
+        # Export
+        if st.button("Générer rapport détaillé"):
+            report_pdf = generate_detailed_report(analysis_results, company_info)
+            st.download_button(
+                "Télécharger le rapport PDF",
+                report_pdf,
+                file_name=f"analyse_csrd_{company_name}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf"
+            )
+        
+        # Bouton pour relancer une analyse
+        if st.button("Nouvelle analyse"):
+            reset_analysis_state()
+            st.experimental_rerun()
+
 
 def show_dashboard_page(db, dashboard):
     st.title("Dashboard global")
