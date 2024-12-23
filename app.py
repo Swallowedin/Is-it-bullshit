@@ -366,75 +366,17 @@ def display_csrd_analysis(analysis_results: Dict[str, Any]):
         for point in analysis_results['conformite']['non_conformites']:
             st.markdown(f"⚠️ {point}")
 
-def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dict[str, Any]):
-    """Génère un rapport PDF détaillé."""
-    from fpdf import FPDF
-    
-    class PDF(FPDF):
-        def header(self):
-            self.set_font('Arial', 'B', 15)
-            self.cell(0, 10, "Rapport d'analyse CSRD/DPEF", 0, 1, 'C')
-            self.ln(10)
-
-        def chapter_title(self, title):
-            self.set_font('Arial', 'B', 12)
-            self.cell(0, 10, title, 0, 1)
-            self.ln(4)
-
-        def chapter_body(self, text):
-            self.set_font('Arial', '', 11)
-            # Remplacer les caractères spéciaux
-            text = text.replace('é', 'e').replace('è', 'e').replace('à', 'a').replace('ù', 'u')
-            text = text.replace('â', 'a').replace('ê', 'e').replace('î', 'i').replace('ô', 'o')
-            text = text.replace('û', 'u').replace('ë', 'e').replace('ï', 'i').replace('ü', 'u')
-            text = text.replace('ç', 'c').replace('œ', 'oe')
-            self.multi_cell(0, 10, text)
-            self.ln()
-
-    try:
-        # Initialisation
-        pdf = PDF()
-        pdf.add_page()
-        
-        # En-tête
-        pdf.set_font('Arial', 'B', 12)
-        pdf.cell(0, 10, f"Entreprise: {company_info['name']}", 0, 1)
-        pdf.cell(0, 10, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1)
-        pdf.cell(0, 10, f"Score global: {analysis_results['metadata']['score_global']:.1f}/100", 0, 1)
-        
-        # Sections d'analyse
-        sections = ["gouvernance", "strategie", "gestion_risques", "indicateurs"]
-        for section in sections:
-            data = analysis_results["analysis"][section]
-            
-            pdf.ln(10)
-            pdf.chapter_title(section.replace('_', ' ').title())
-            
-            # Score
-            pdf.chapter_body(f"Score: {data['score']:.1f}/100")
-            pdf.chapter_body(data['evaluation'])
-            
-            # Points forts
-            pdf.chapter_title("Points forts:")
-            for point in data['points_forts']:
-                pdf.chapter_body("- " + point)
-            
-            # Axes d'amelioration
-            pdf.chapter_title("Axes d'amelioration:")
-            for point in data['axes_amelioration']:
-                pdf.chapter_body("- " + point)
-        
-        # Conformité
-        pdf.ln(10)
-        pdf.chapter_title("Conformite reglementaire")
-        pdf.chapter_body(analysis_results['conformite']['evaluation'])
-        
-        # Retourner directement le PDF en bytes
-        return pdf.output(dest='S')
-        
-    except Exception as e:
-        st.error(f"Erreur lors de la generation du PDF: {str(e)}")
-        return None
+# Dans la partie affichage des résultats
+if st.button("📄 Générer rapport détaillé"):
+    with st.spinner("Génération du rapport PDF..."):
+        report_pdf = generate_detailed_report(analysis_results, company_info)
+        if report_pdf:
+            st.download_button(
+                label="⬇️ Télécharger le rapport PDF",
+                data=report_pdf,
+                file_name=f"analyse_csrd_{company_info['name']}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf"
+            )
         
 def main():
    # Initialisation de l'analyseur
