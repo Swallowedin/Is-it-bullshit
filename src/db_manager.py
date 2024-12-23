@@ -1,3 +1,4 @@
+import streamlit as st
 import sqlite3
 from datetime import datetime
 import json
@@ -5,7 +6,10 @@ import json
 class DatabaseManager:
     def __init__(self, db_path="reports_analysis.db"):
         self.db_path = db_path
-        self.init_db()
+        try:
+            self.init_db()
+        except Exception as e:
+            st.error(f"Erreur d'initialisation de la base de données: {str(e)}")
     
     def init_db(self):
         with sqlite3.connect(self.db_path) as conn:
