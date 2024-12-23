@@ -1,9 +1,13 @@
+import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
 class Dashboard:
     def __init__(self):
-        self.figures = {}
+        try:
+            self.figures = {}
+        except Exception as e:
+            st.error(f"Erreur d'initialisation Dashboard: {str(e)}")
     
     def create_score_radar(self, scores):
         categories = list(scores.keys())
