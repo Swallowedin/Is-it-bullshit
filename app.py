@@ -46,27 +46,36 @@ def generate_detailed_report(analysis_results, company_info):
     pdf.cell(200, 10, txt=f"Rapport d'analyse CSRD/DPEF", ln=1, align='C')
     return pdf.output(dest='S').encode('latin-1')
 
-# Initialisation des services
-@st.cache_resource
-def init_services():
-    try:
-        db = DatabaseManager()
-        analyzer = ReportAnalyzer()  # Plus besoin de passer la clé ici
-        dashboard = Dashboard()
-        return db, analyzer, dashboard
-    except Exception as e:
-        st.error(f"Erreur d'initialisation: {str(e)}")
-        return None, None, None
+def initialize_services():
+    """Initialize services with proper error handling and state management"""
+    if 'services_initialized' not in st.session_state:
+        st.session_state.services_initialized = False
+        st.session_state.db = None
+        st.session_state.analyzer = None
+        st.session_state.dashboard = None
 
-# Interface principale
-def main():
-    services = init_services()
+    if not st.session_state.services_initialized:
+        try:
+            st.session_state.db = DatabaseManager()
+            st.session_state.analyzer = ReportAnalyzer()
+            st.session_state.dashboard = Dashboard()
+            st.session_state.services_initialized = True
+        except Exception as e:
+            st.error(f"Erreur d'initialisation des services: {str(e)}")
+            return False
     
-    if None in services:
-        st.error("Erreur: Vérifiez que la clé API est configurée dans les secrets Streamlit.")
+    return True
+
+def main():
+    # Initialize services first
+    if not initialize_services():
+        st.warning("L'application fonctionne en mode limité en raison d'erreurs d'initialisation.")
         return
-        
-    db, analyzer, dashboard = services
+    
+    # Get services from session state
+    db = st.session_state.db
+    analyzer = st.session_state.analyzer
+    dashboard = st.session_state.dashboard
     
     # Sidebar
     with st.sidebar:
