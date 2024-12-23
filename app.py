@@ -152,32 +152,39 @@ class CSRDReportAnalyzer:
         except Exception as e:
             raise Exception(f"Erreur d'initialisation: {str(e)}")
 
-    def analyze_report(self, text: str, company_info: Dict[str, Any], csrd_regulation: str) -> Dict[str, Any]:
-        """Analyse un rapport selon les critères CSRD."""
-        try:
-            # Création du prompt
-            prompt = self._create_analysis_prompt(text, company_info, csrd_regulation)
+  def analyze_report(self, text: str, company_info: Dict[str, Any], csrd_regulation: str) -> Dict[str, Any]:
+    """Analyse un rapport selon les critères CSRD."""
+    if not text:
+        raise ValueError("Erreur: Le texte du rapport est vide")
+        
+    try:
+        # Log pour debug et vérification
+        st.write(f"Analyse du rapport pour: {company_info['name']}")
+        st.write(f"Longueur du texte: {len(text)} caractères")
+        
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": """Tu es un expert en analyse CSRD/DPEF.
+                Analyse UNIQUEMENT le contenu fourni, sans faire de suppositions.
+                Si tu ne peux pas analyser le contenu, tu DOIS retourner une erreur."""},
+                {"role": "user", "content": self._create_analysis_prompt(text, company_info, csrd_regulation)}
+            ],
+            temperature=0.5,
+            max_tokens=4000,
+            response_format={"type": "json_object"}
+        )
+        
+        results = json.loads(response.choices[0].message.content)
+        
+        # Validation stricte des résultats
+        if not results or not results.get("analysis"):
+            raise ValueError("L'analyse n'a pas produit de résultats valides")
             
-            # Appel à l'API
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": """Tu es un expert en analyse CSRD/DPEF qui fournit des évaluations détaillées.
-                    Analyse le rapport selon la réglementation fournie et évalue chaque aspect en détail."""},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=4000,
-                response_format={"type": "json_object"}
-            )
+        return results
             
-            # Traitement de la réponse
-            results = json.loads(response.choices[0].message.content)
-            return self._validate_and_enhance_results(results)
-            
-        except Exception as e:
-            st.error(f"Erreur d'analyse: {str(e)}")
-            return self._get_demo_analysis()
+    except Exception as e:
+        raise Exception(f"Échec de l'analyse: {str(e)}")
 
     def _create_analysis_prompt(self, text: str, company_info: Dict[str, Any], csrd_regulation: str) -> str:
         """Crée le prompt d'analyse détaillé."""
