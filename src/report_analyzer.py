@@ -7,48 +7,88 @@ class ReportAnalyzer:
     def __init__(self, regulatory_db_path="regulatory_docs/"):
         try:
             if "OPENAI_API_KEY" not in st.secrets:
-                st.error("Clé API OpenAI manquante dans les secrets Streamlit")
-                raise ValueError("Clé API OpenAI manquante")
-            self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                st.error("Clé API manquante dans les secrets Streamlit")
+                raise ValueError("Clé API manquante")
+                
+            self.client = OpenAI(
+                api_key=st.secrets["OPENAI_API_KEY"]
+            )
+            
+            self.model = "gpt-4o-mini"
+            self.max_output_tokens = 16000
+            self.max_input_tokens = 128000
+            self.temperature = 0.7
+            
             self.regulatory_db_path = regulatory_db_path
             self.is_demo = False
+            
         except Exception as e:
             raise Exception(f"Erreur d'initialisation ReportAnalyzer: {str(e)}")
 
     def analyze_report(self, text: str, company_info: Dict[str, Any], report_config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Analyse un rapport CSRD/DPEF en utilisant GPT-4.
-        """
+        """Analyse un rapport avec logs détaillés."""
         try:
+            # Debug: Afficher la longueur du texte extrait
+            st.write(f"Longueur du texte extrait: {len(text)} caractères")
+            st.write("Premiers 500 caractères du texte:")
+            st.code(text[:500])
+
             if self.is_demo:
                 return self._get_demo_analysis()
 
-            # Préparer le prompt pour l'analyse
+            # Préparer le prompt
             prompt = self._prepare_analysis_prompt(text, company_info, report_config)
+            
+            # Debug: Afficher le prompt
+            with st.expander("Voir le prompt envoyé à l'API"):
+                st.code(prompt)
 
-            # Appeler l'API OpenAI avec la nouvelle syntaxe
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",  # ou le modèle configuré
-                messages=[
-                    {"role": "system", "content": """Tu es un expert en analyse de rapports CSRD et DPEF.
-                    Tu dois analyser le rapport fourni selon les critères suivants:
-                    - Conformité réglementaire
-                    - Qualité des données
-                    - Engagement et actions
-                    - Transparence"""},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=4000
-            )
+            try:
+                # Debug: Afficher les paramètres de l'appel API
+                st.write("Paramètres de l'appel API:")
+                st.json({
+                    "model": self.model,
+                    "temperature": self.temperature,
+                    "max_tokens": 4000,
+                })
 
-            # Analyser la réponse (mise à jour pour la nouvelle API)
-            analysis = self._parse_gpt_response(response.choices[0].message.content)
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": """Analyse ce rapport CSRD/DPEF et fournis:
+1. Une analyse approfondie
+2. Des scores sur 100 pour: conformité, qualité données, engagement, transparence
+3. Des recommandations concrètes
+4. Les sources citées
+Format JSON uniquement."""},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=4000,
+                    response_format={"type": "json_object"}
+                )
+                
+                # Debug: Afficher la réponse brute
+                with st.expander("Voir la réponse brute de l'API"):
+                    st.code(response.model_dump_json())
+                
+                # Récupérer et parser la réponse
+                raw_content = response.choices[0].message.content
+                st.write("Contenu de la réponse:")
+                st.code(raw_content)
+                
+                analysis = self._parse_gpt_response(raw_content)
+                
+            except Exception as api_error:
+                st.error(f"Erreur API détaillée: {str(api_error)}")
+                return self._get_demo_analysis()
 
-            # Calculer les scores
+            # Debug: Afficher l'analyse parsée
+            with st.expander("Voir l'analyse parsée"):
+                st.json(analysis)
+
             scores = self._calculate_scores(analysis)
 
-            # Structurer les résultats
             results = {
                 "analysis": analysis.get("analysis", "Analyse non disponible"),
                 "scores": {
@@ -59,57 +99,80 @@ class ReportAnalyzer:
                 "sources": analysis.get("sources", [])
             }
 
+            # Debug: Afficher les résultats finaux
+            with st.expander("Voir les résultats finaux"):
+                st.json(results)
+
             return results
 
         except Exception as e:
-            st.error(f"Erreur lors de l'analyse du rapport: {str(e)}")
+            st.error(f"Erreur lors de l'analyse du rapport (avec détails): {str(e)}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
             return self._get_demo_analysis()
 
     def _prepare_analysis_prompt(self, text: str, company_info: Dict[str, Any], report_config: Dict[str, Any]) -> str:
-        """Prépare le prompt pour l'analyse GPT."""
-        # Limiter la taille du texte pour éviter les dépassements de tokens
-        max_text_length = 6000  # Ajusté pour GPT-4
+        """Prépare le prompt avec plus de structure."""
+        max_text_length = 100000
         truncated_text = text[:max_text_length] + ("..." if len(text) > max_text_length else "")
         
-        return f"""Analyse le rapport suivant pour l'entreprise {company_info['name']}.
-        
-        Contexte:
-        - Secteur: {company_info['sector']}
-        - Taille: {company_info['size']}
-        - Type de rapport: {report_config['type']}
-        
-        Texte du rapport:
-        {truncated_text}
-        
-        Format de réponse souhaité (JSON):
-        {{
-            "analysis": "Analyse générale",
-            "recommendations": ["rec1", "rec2", ...],
-            "sources": ["source1", "source2", ...],
-            "scores": {{
-                "conformite": X,
-                "qualite_donnees": X,
-                "engagement": X,
-                "transparence": X
-            }}
-        }}
-        """
+        return f"""Voici le rapport CSRD/DPEF à analyser:
+
+ENTREPRISE: {company_info['name']}
+SECTEUR: {company_info['sector']}
+TAILLE: {company_info['size']}
+TYPE: {report_config['type']}
+
+CONTENU DU RAPPORT:
+{truncated_text}
+
+CONSIGNES D'ANALYSE:
+1. Fournir une analyse générale
+2. Évaluer sur 100 points:
+   - Conformité réglementaire CSRD/DPEF
+   - Qualité et fiabilité des données
+   - Niveau d'engagement et actions
+   - Transparence et identification des risques
+3. Lister les recommandations d'amélioration
+4. Identifier les sources principales
+
+FORMAT DE RÉPONSE (JSON uniquement):
+{{
+    "analysis": "Analyse détaillée...",
+    "scores": {{
+        "conformite": 0-100,
+        "qualite_donnees": 0-100,
+        "engagement": 0-100,
+        "transparence": 0-100
+    }},
+    "recommendations": [
+        "Recommandation 1",
+        "Recommandation 2"
+    ],
+    "sources": [
+        "Source 1",
+        "Source 2"
+    ]
+}}"""
 
     def _parse_gpt_response(self, response: str) -> Dict[str, Any]:
-        """Parse la réponse de GPT en dictionnaire structuré."""
+        """Parse la réponse avec plus de robustesse."""
         try:
             return json.loads(response)
         except json.JSONDecodeError:
-            analysis = {
-                "analysis": "Analyse non disponible",
-                "recommendations": [],
-                "sources": [],
+            st.error("Erreur de parsing JSON. Réponse brute:")
+            st.code(response)
+            # Retourner une structure minimale en cas d'erreur
+            return {
+                "analysis": "Erreur de parsing de la réponse",
                 "scores": {
                     "conformite": 0,
                     "qualite_donnees": 0,
                     "engagement": 0,
                     "transparence": 0
-                }
+                },
+                "recommendations": [],
+                "sources": []
             }
             
             lines = response.split('\n')
