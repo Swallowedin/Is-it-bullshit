@@ -391,45 +391,47 @@ def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dic
             self.multi_cell(0, 10, text)
             self.ln()
 
-    # Initialisation
-    pdf = PDF()
-    pdf.add_page()
-    
-    # En-tête
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 10, f"Entreprise: {company_info['name']}", 0, 1)
-    pdf.cell(0, 10, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1)
-    pdf.cell(0, 10, f"Score global: {analysis_results['metadata']['score_global']:.1f}/100", 0, 1)
-    
-    # Sections d'analyse
-    sections = ["gouvernance", "strategie", "gestion_risques", "indicateurs"]
-    for section in sections:
-        data = analysis_results["analysis"][section]
-        
-        pdf.ln(10)
-        pdf.chapter_title(section.replace('_', ' ').title())
-        
-        # Score
-        pdf.chapter_body(f"Score: {data['score']:.1f}/100")
-        pdf.chapter_body(data['evaluation'])
-        
-        # Points forts
-        pdf.chapter_title("Points forts:")
-        for point in data['points_forts']:
-            pdf.chapter_body("- " + point)
-        
-        # Axes d'amelioration
-        pdf.chapter_title("Axes d'amelioration:")
-        for point in data['axes_amelioration']:
-            pdf.chapter_body("- " + point)
-    
-    # Conformité
-    pdf.ln(10)
-    pdf.chapter_title("Conformite reglementaire")
-    pdf.chapter_body(analysis_results['conformite']['evaluation'])
-    
     try:
-        return pdf.output(dest='S').encode('latin-1', errors='replace')
+        # Initialisation
+        pdf = PDF()
+        pdf.add_page()
+        
+        # En-tête
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, f"Entreprise: {company_info['name']}", 0, 1)
+        pdf.cell(0, 10, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1)
+        pdf.cell(0, 10, f"Score global: {analysis_results['metadata']['score_global']:.1f}/100", 0, 1)
+        
+        # Sections d'analyse
+        sections = ["gouvernance", "strategie", "gestion_risques", "indicateurs"]
+        for section in sections:
+            data = analysis_results["analysis"][section]
+            
+            pdf.ln(10)
+            pdf.chapter_title(section.replace('_', ' ').title())
+            
+            # Score
+            pdf.chapter_body(f"Score: {data['score']:.1f}/100")
+            pdf.chapter_body(data['evaluation'])
+            
+            # Points forts
+            pdf.chapter_title("Points forts:")
+            for point in data['points_forts']:
+                pdf.chapter_body("- " + point)
+            
+            # Axes d'amelioration
+            pdf.chapter_title("Axes d'amelioration:")
+            for point in data['axes_amelioration']:
+                pdf.chapter_body("- " + point)
+        
+        # Conformité
+        pdf.ln(10)
+        pdf.chapter_title("Conformite reglementaire")
+        pdf.chapter_body(analysis_results['conformite']['evaluation'])
+        
+        # Retourner directement le PDF en bytes
+        return pdf.output(dest='S')
+        
     except Exception as e:
         st.error(f"Erreur lors de la generation du PDF: {str(e)}")
         return None
