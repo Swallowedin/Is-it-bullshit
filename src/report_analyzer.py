@@ -17,7 +17,7 @@ class ReportAnalyzer:
 
     def analyze_report(self, text: str, company_info: Dict[str, Any], report_config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Analyse un rapport CSRD/DPEF en utilisant GPT-4.
+        Analyse un rapport CSRD/DPEF en utilisant GPT-4o-mini.
         
         Args:
             text (str): Le texte extrait du rapport
@@ -37,7 +37,7 @@ class ReportAnalyzer:
 
             # Appeler l'API OpenAI
             response = openai.ChatCompletion.create(
-                model="gpt-4",  # ou le modèle configuré
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": """Tu es un expert en analyse de rapports CSRD et DPEF.
                     Tu dois analyser le rapport fourni selon les critères suivants:
@@ -48,7 +48,7 @@ class ReportAnalyzer:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=2000
+                max_tokens=150000
             )
 
             # Analyser la réponse
