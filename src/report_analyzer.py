@@ -1,5 +1,5 @@
 import streamlit as st
-import openai
+from openai import OpenAI
 from typing import Dict, Any
 import json
 
@@ -9,7 +9,7 @@ class ReportAnalyzer:
             if "OPENAI_API_KEY" not in st.secrets:
                 st.error("Clé API OpenAI manquante dans les secrets Streamlit")
                 raise ValueError("Clé API OpenAI manquante")
-            openai.api_key = st.secrets["OPENAI_API_KEY"]
+            self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
             self.regulatory_db_path = regulatory_db_path
             self.is_demo = False
         except Exception as e:
@@ -17,27 +17,18 @@ class ReportAnalyzer:
 
     def analyze_report(self, text: str, company_info: Dict[str, Any], report_config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Analyse un rapport CSRD/DPEF en utilisant GPT-4o-mini.
-        
-        Args:
-            text (str): Le texte extrait du rapport
-            company_info (dict): Informations sur l'entreprise
-            report_config (dict): Configuration de l'analyse
-            
-        Returns:
-            dict: Résultats de l'analyse
+        Analyse un rapport CSRD/DPEF en utilisant GPT-4.
         """
         try:
-            # Si mode démo ou erreur, retourner une analyse de démonstration
             if self.is_demo:
                 return self._get_demo_analysis()
 
             # Préparer le prompt pour l'analyse
             prompt = self._prepare_analysis_prompt(text, company_info, report_config)
 
-            # Appeler l'API OpenAI
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            # Appeler l'API OpenAI avec la nouvelle syntaxe
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",  # ou le modèle configuré
                 messages=[
                     {"role": "system", "content": """Tu es un expert en analyse de rapports CSRD et DPEF.
                     Tu dois analyser le rapport fourni selon les critères suivants:
@@ -48,10 +39,10 @@ class ReportAnalyzer:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=150000
+                max_tokens=4000
             )
 
-            # Analyser la réponse
+            # Analyser la réponse (mise à jour pour la nouvelle API)
             analysis = self._parse_gpt_response(response.choices[0].message.content)
 
             # Calculer les scores
@@ -76,6 +67,10 @@ class ReportAnalyzer:
 
     def _prepare_analysis_prompt(self, text: str, company_info: Dict[str, Any], report_config: Dict[str, Any]) -> str:
         """Prépare le prompt pour l'analyse GPT."""
+        # Limiter la taille du texte pour éviter les dépassements de tokens
+        max_text_length = 6000  # Ajusté pour GPT-4
+        truncated_text = text[:max_text_length] + ("..." if len(text) > max_text_length else "")
+        
         return f"""Analyse le rapport suivant pour l'entreprise {company_info['name']}.
         
         Contexte:
@@ -84,7 +79,7 @@ class ReportAnalyzer:
         - Type de rapport: {report_config['type']}
         
         Texte du rapport:
-        {text[:8000]}...  # Limitation de la taille pour GPT-4
+        {truncated_text}
         
         Format de réponse souhaité (JSON):
         {{
@@ -103,10 +98,8 @@ class ReportAnalyzer:
     def _parse_gpt_response(self, response: str) -> Dict[str, Any]:
         """Parse la réponse de GPT en dictionnaire structuré."""
         try:
-            # Essayer de parser directement si c'est du JSON valide
             return json.loads(response)
         except json.JSONDecodeError:
-            # Si ce n'est pas du JSON valide, extraire les informations pertinentes
             analysis = {
                 "analysis": "Analyse non disponible",
                 "recommendations": [],
@@ -119,12 +112,14 @@ class ReportAnalyzer:
                 }
             }
             
-            # Parsing basique du texte
             lines = response.split('\n')
             current_section = None
             
             for line in lines:
                 line = line.strip()
+                if not line:
+                    continue
+                    
                 if "Analyse" in line:
                     current_section = "analysis"
                     analysis["analysis"] = line.split(":", 1)[1].strip() if ":" in line else line
@@ -150,10 +145,8 @@ class ReportAnalyzer:
     def _calculate_scores(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Calcule les scores à partir de l'analyse."""
         try:
-            # Récupérer les scores bruts
             raw_scores = analysis.get("scores", {})
             
-            # Calculer les scores détaillés normalisés
             detailed_scores = {
                 "Conformité réglementaire": float(raw_scores.get("conformite", 0)),
                 "Qualité des données": float(raw_scores.get("qualite_donnees", 0)),
@@ -161,7 +154,6 @@ class ReportAnalyzer:
                 "Transparence": float(raw_scores.get("transparence", 0))
             }
             
-            # Calculer le score global (moyenne pondérée)
             weights = {
                 "Conformité réglementaire": 0.3,
                 "Qualité des données": 0.25,
