@@ -39,12 +39,93 @@ def get_company_context(company_name):
     }
 
 def generate_detailed_report(analysis_results, company_info):
+    """
+    Génère un rapport PDF détaillé à partir des résultats d'analyse.
+    """
     from fpdf import FPDF
+    from datetime import datetime
+    
+    # Création du PDF
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"Rapport d'analyse CSRD/DPEF", ln=1, align='C')
-    return pdf.output(dest='S').encode('latin-1')
+    
+    # Polices et styles
+    pdf.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
+    pdf.set_font('DejaVu', size=16)
+    
+    # En-tête
+    pdf.cell(200, 10, txt="Rapport d'analyse CSRD/DPEF", ln=1, align='C')
+    pdf.ln(10)
+    
+    # Informations de l'entreprise
+    pdf.set_font('DejaVu', size=12)
+    pdf.cell(200, 10, txt=f"Entreprise : {company_info['name']}", ln=1)
+    pdf.cell(200, 10, txt=f"Secteur : {company_info['sector']}", ln=1)
+    pdf.cell(200, 10, txt=f"Taille : {company_info['size']}", ln=1)
+    pdf.cell(200, 10, txt=f"Date d'analyse : {datetime.now().strftime('%d/%m/%Y')}", ln=1)
+    pdf.ln(10)
+    
+    # Score global
+    pdf.set_font('DejaVu', size=14)
+    pdf.cell(200, 10, txt="Score global", ln=1)
+    pdf.set_font('DejaVu', size=12)
+    pdf.cell(200, 10, txt=f"{analysis_results['scores']['global']}/100", ln=1)
+    pdf.ln(10)
+    
+    # Scores détaillés
+    pdf.set_font('DejaVu', size=14)
+    pdf.cell(200, 10, txt="Scores détaillés", ln=1)
+    pdf.set_font('DejaVu', size=12)
+    for criteria, score in analysis_results['scores']['detailed'].items():
+        pdf.cell(200, 10, txt=f"{criteria} : {score}/100", ln=1)
+    pdf.ln(10)
+    
+    # Analyse générale
+    pdf.set_font('DejaVu', size=14)
+    pdf.cell(200, 10, txt="Analyse générale", ln=1)
+    pdf.set_font('DejaVu', size=12)
+    
+    # Découper le texte en paragraphes pour éviter les dépassements
+    analysis_text = analysis_results['analysis']
+    words = analysis_text.split()
+    lines = []
+    current_line = []
+    
+    for word in words:
+        current_line.append(word)
+        if len(' '.join(current_line)) > 80:  # Limite approximative de caractères par ligne
+            lines.append(' '.join(current_line[:-1]))
+            current_line = [word]
+    if current_line:
+        lines.append(' '.join(current_line))
+    
+    for line in lines:
+        pdf.multi_cell(0, 10, txt=line)
+    pdf.ln(10)
+    
+    # Recommandations
+    pdf.set_font('DejaVu', size=14)
+    pdf.cell(200, 10, txt="Recommandations", ln=1)
+    pdf.set_font('DejaVu', size=12)
+    for i, rec in enumerate(analysis_results['recommendations'], 1):
+        pdf.multi_cell(0, 10, txt=f"{i}. {rec}")
+    pdf.ln(10)
+    
+    # Sources citées
+    pdf.set_font('DejaVu', size=14)
+    pdf.cell(200, 10, txt="Sources citées", ln=1)
+    pdf.set_font('DejaVu', size=12)
+    for source in analysis_results['sources']:
+        pdf.cell(200, 10, txt=f"• {source}", ln=1)
+    
+    # Note de bas de page
+    pdf.ln(20)
+    pdf.set_font('DejaVu', size=10)
+    pdf.set_text_color(128, 128, 128)
+    pdf.cell(200, 10, txt=f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}", ln=1, align='C')
+    
+    # Retourner le PDF encodé
+    return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 def initialize_services():
     """Initialize services with proper error handling and state management"""
