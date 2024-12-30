@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -29,7 +30,7 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Erreur lors de l'extraction du PDF: {str(e)}")
         return None
 
-def get_company_context(company_name):
+def get_company_context(company_name: str) -> Dict[str, str]:
     """Récupère le contexte de l'entreprise."""
     return {
         "name": company_name,
@@ -37,7 +38,7 @@ def get_company_context(company_name):
         "size": "Non spécifiée"
     }
 
-def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dict[str, Any]):
+def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dict[str, Any]) -> bytes:
     """Génère un rapport PDF détaillé."""
     from fpdf import FPDF
     
@@ -57,13 +58,19 @@ def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dic
         pdf.cell(0, 10, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1)
         
         # Sections d'analyse
-        sections = ["gouvernance", "strategie", "gestion_risques", "indicateurs"]
+        sections = ["environmental", "social", "governance"]
+        section_names = {
+            "environmental": "Environnement",
+            "social": "Social",
+            "governance": "Gouvernance"
+        }
+        
         for section in sections:
             data = analysis_results["analysis"][section]
             
             pdf.ln(5)
             pdf.set_font('Arial', 'B', 12)
-            pdf.cell(0, 10, section.replace('_', ' ').title(), 0, 1)
+            pdf.cell(0, 10, section_names[section], 0, 1)
             
             pdf.set_font('Arial', '', 11)
             pdf.cell(0, 10, f"Score: {data['score']:.1f}/100", 0, 1)
@@ -77,53 +84,84 @@ def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dic
             for point in data['axes_amelioration']:
                 pdf.multi_cell(0, 10, "- " + point)
         
-        # Créer un buffer en mémoire
+        # Conformité réglementaire
+        pdf.ln(10)
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, "Conformité réglementaire", 0, 1)
+        pdf.set_font('Arial', '', 11)
+        pdf.cell(0, 10, f"Score: {analysis_results['conformite']['score_global']:.1f}/100", 0, 1)
+        pdf.multi_cell(0, 10, analysis_results['conformite']['evaluation'])
+        
+        if analysis_results['conformite']['non_conformites']:
+            pdf.cell(0, 10, "Points de non-conformité:", 0, 1)
+            for point in analysis_results['conformite']['non_conformites']:
+                pdf.multi_cell(0, 10, "- " + point)
+        
+        # Créer le buffer en mémoire
         pdf_buffer = io.BytesIO()
         pdf.output(pdf_buffer)
         
-        # Retourner les bytes du buffer
-        pdf_bytes = pdf_buffer.getvalue()
-        pdf_buffer.close()
-        return pdf_bytes
+        return pdf_buffer.getvalue()
         
     except Exception as e:
-        st.error(f"Erreur lors de la generation du PDF: {str(e)}")
+        st.error(f"Erreur lors de la génération du PDF: {str(e)}")
         return None
 
 def display_csrd_analysis(analysis_results: Dict[str, Any]):
     """Affiche les résultats de l'analyse CSRD."""
     # Score global
     st.metric("Score global CSRD", 
-             f"{analysis_results['metadata']['score_global']:.1f}/100",
+             f"{analysis_results['conformite']['score_global']:.1f}/100",
              delta=None)
     
+    # Création d'un mapping entre les noms techniques et les noms d'affichage
+    section_names = {
+        "environmental": "Environnement",
+        "social": "Social",
+        "governance": "Gouvernance"
+    }
+    
     # Onglets par section
-    tabs = st.tabs(["Gouvernance", "Stratégie", "Gestion des risques", "Indicateurs"])
+    tab_names = list(section_names.values())
+    tabs = st.tabs(tab_names)
     
-    for tab, section in zip(tabs, ["gouvernance", "strategie", "gestion_risques", "indicateurs"]):
+    for tab, (section_key, section_name) in zip(tabs, section_names.items()):
         with tab:
-            data = analysis_results["analysis"][section]
+            try:
+                data = analysis_results["analysis"][section_key]
+                
+                # Score de la section
+                st.metric(f"Score {section_name}", 
+                         f"{data['score']:.1f}/100")
+                
+                # Évaluation
+                st.markdown("### Évaluation")
+                st.write(data['evaluation'])
+                
+                # Points forts et axes d'amélioration
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### Points forts")
+                    if data['points_forts']:
+                        for point in data['points_forts']:
+                            st.markdown(f"✅ {point}")
+                    else:
+                        st.info("Aucun point fort identifié.")
+                
+                with col2:
+                    st.markdown("### Axes d'amélioration")
+                    if data['axes_amelioration']:
+                        for point in data['axes_amelioration']:
+                            st.markdown(f"📈 {point}")
+                    else:
+                        st.info("Aucun axe d'amélioration identifié.")
             
-            # Score de la section
-            st.metric(f"Score {section.replace('_', ' ').title()}", 
-                     f"{data['score']:.1f}/100")
-            
-            # Évaluation
-            st.markdown("### Évaluation")
-            st.write(data['evaluation'])
-            
-            # Points forts et axes d'amélioration
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("### Points forts")
-                for point in data['points_forts']:
-                    st.markdown(f"✅ {point}")
-            with col2:
-                st.markdown("### Axes d'amélioration")
-                for point in data['axes_amelioration']:
-                    st.markdown(f"📈 {point}")
+            except KeyError as e:
+                st.error(f"Erreur: Données manquantes pour la section {section_name}")
+                st.write(f"Détail de l'erreur: {str(e)}")
     
-    # Conformité
+    # Conformité réglementaire
     st.markdown("---")
     st.markdown("### Conformité réglementaire")
     st.metric("Score de conformité", 
@@ -134,8 +172,11 @@ def display_csrd_analysis(analysis_results: Dict[str, Any]):
         st.markdown("#### Points de non-conformité")
         for point in analysis_results['conformite']['non_conformites']:
             st.markdown(f"⚠️ {point}")
+    else:
+        st.success("Aucun point de non-conformité identifié.")
 
 def main():
+    """Fonction principale de l'application."""
     # Initialisation de l'analyseur
     if 'analyzer' not in st.session_state:
         try:
@@ -175,6 +216,7 @@ def main():
         def reset_analysis_state():
             st.session_state.analysis_completed = False
             st.session_state.analysis_results = None
+            st.session_state.current_company_info = None
         
         # Interface d'upload
         col1, col2 = st.columns([2, 1])
@@ -203,60 +245,50 @@ def main():
         
         with analyze_col2:
             if uploaded_file and company_name and not st.session_state.analysis_completed:
-                if st.button("🔍 Lancer l'analyse CSRD", use_container_width=True, key="start_analysis"):
+                if st.button("🔍 Lancer l'analyse CSRD", use_container_width=True):
                     with st.spinner("Analyse CSRD en cours..."):
                         # Extraction du texte du PDF
                         text = extract_text_from_pdf(uploaded_file)
                         
                         if text:
-                            # Chargement des documents ESRS
-                            with st.spinner("Chargement des documents ESRS..."):
-                                csrd_docs = load_csrd_documents()
-                                if not csrd_docs:
-                                    st.error("Erreur lors du chargement des documents ESRS")
-                                    return
+                            try:
+                                # Lancer l'analyse
+                                analysis_results = st.session_state.analyzer.analyze_report(
+                                    text=text,
+                                    company_info=company_info
+                                )
                                 
-                                # Obtenir le contexte réglementaire complet
-                                regulatory_context = get_regulatory_context(csrd_docs, "general")
+                                st.session_state.analysis_results = analysis_results
+                                st.session_state.analysis_completed = True
+                                st.rerun()
                                 
-                                # Lancer l'analyse avec le contexte ESRS
-                                with st.spinner("Analyse en cours..."):
-                                    analysis_results = st.session_state.analyzer.analyze_report(
-                                        text=text,
-                                        company_info=company_info,
-                                        csrd_regulation=regulatory_context
-                                    )
-                                    
-                                    st.session_state.analysis_results = analysis_results
-                                    st.session_state.analysis_completed = True
-                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Erreur lors de l'analyse: {str(e)}")
         
         st.markdown("---")
         
         # Affichage des résultats
         if st.session_state.analysis_completed and st.session_state.analysis_results:
-            analysis_results = st.session_state.analysis_results
-            company_info = st.session_state.current_company_info
-            
-            # Affichage des résultats
-            display_csrd_analysis(analysis_results)
+            display_csrd_analysis(st.session_state.analysis_results)
             
             # Export et nouvelle analyse
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("📄 Générer rapport détaillé", key="gen_pdf"):
-                    report_pdf = generate_detailed_report(analysis_results, company_info)
+                if st.button("📄 Générer rapport détaillé"):
+                    report_pdf = generate_detailed_report(
+                        st.session_state.analysis_results,
+                        st.session_state.current_company_info
+                    )
                     if report_pdf:
                         st.download_button(
                             "⬇️ Télécharger le rapport PDF",
                             data=report_pdf,
                             file_name=f"analyse_csrd_{company_name}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf",
-                            key="download_pdf"
+                            mime="application/pdf"
                         )
             
             with col2:
-                if st.button("🔄 Nouvelle analyse", key="new_analysis"):
+                if st.button("🔄 Nouvelle analyse"):
                     reset_analysis_state()
                     st.rerun()
 
