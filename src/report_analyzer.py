@@ -1,14 +1,17 @@
-# report_analyzer.py
 import streamlit as st
 from openai import OpenAI
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 import json
 from datetime import datetime
 
 @st.cache_data
-def load_csrd_documents():
-    """Charge les documents CSRD/ESRS"""
+def load_csrd_documents() -> Optional[Dict[str, Dict[str, str]]]:
+    """
+    Charge les documents CSRD/ESRS depuis le système de fichiers.
+    Returns:
+        Dict[str, Dict[str, str]]: Documents CSRD organisés par catégorie
+    """
     try:
         base_path = Path("data/csrd")
         csrd_data = {
@@ -27,9 +30,9 @@ def load_csrd_documents():
                 try:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
+                        name = file_path.stem
                         
                         # Catégoriser les fichiers selon leur préfixe
-                        name = file_path.stem
                         if name.startswith("ESRS_E"):
                             csrd_data["environmental"][name] = content
                         elif name.startswith("ESRS_S"):
@@ -42,9 +45,9 @@ def load_csrd_documents():
                             csrd_data["annexes"][name] = content
                         elif name in ["Questions_réponses", "precisions_esrs"]:
                             csrd_data["precisions"][name] = content
-                        
                 except Exception as e:
                     st.error(f"Erreur lors de la lecture de {file_path}: {str(e)}")
+                    continue
         
         return csrd_data
 
@@ -53,13 +56,20 @@ def load_csrd_documents():
         return None
 
 def get_regulatory_context(csrd_data: Dict[str, Dict[str, str]], section: str) -> str:
-    """Récupère le contexte réglementaire pour une section donnée."""
+    """
+    Récupère le contexte réglementaire pour une section donnée.
+    Args:
+        csrd_data (Dict): Documents CSRD
+        section (str): Section à analyser
+    Returns:
+        str: Contexte réglementaire concaténé
+    """
     if not csrd_data:
         return ""
         
     relevant_docs = []
     
-    # Ajouter les documents cross-cutting
+    # Ajouter les documents cross-cutting pour les sections principales
     if section in ["environmental", "social", "governance"]:
         relevant_docs.extend(csrd_data["cross_cutting"].values())
     
@@ -73,18 +83,63 @@ def get_regulatory_context(csrd_data: Dict[str, Dict[str, str]], section: str) -
         
     return "\n\n---\n\n".join(relevant_docs)
 
+class SectionAnalyzer:
+    """Classe utilitaire pour l'analyse d'une section spécifique."""
+    
+    def __init__(self, section: str, evaluation_criteria: Dict[str, Any]):
+        self.section = section
+        self.criteria = evaluation_criteria[section]
+    
+    def create_analysis_prompt(self, text: str, company_info: Dict[str, Any], 
+                             regulatory_context: str) -> str:
+        """Crée le prompt pour l'analyse d'une section."""
+        return f"""Analyser la section {self.section} selon les normes ESRS.
+
+CONTEXTE ENTREPRISE:
+{json.dumps(company_info, indent=2)}
+
+RÉFÉRENTIEL ESRS APPLICABLE:
+{regulatory_context[:2000]}
+
+CRITÈRES D'ÉVALUATION:
+{json.dumps(self.criteria, indent=2)}
+
+TEXTE À ANALYSER:
+{text[:8000]}
+
+FORMAT DE RÉPONSE (JSON):
+{{
+    "score": float,  # Score global (0-100)
+    "evaluation": string,  # Évaluation générale
+    "standards_analysis": {{  # Analyse par standard ESRS
+        "standard_id": {{
+            "score": float,
+            "conformity": string,
+            "findings": [string],
+            "evidence": [string]
+        }}
+    }},
+    "compliance": {{
+        "conforming": [string],
+        "non_conforming": [string],
+        "partially_conforming": [string]
+    }},
+    "recommendations": [string]
+}}"""
+
 class CSRDReportAnalyzer:
     """Analyseur de rapports CSRD avec évaluation détaillée."""
     
     def __init__(self):
+        """Initialise l'analyseur avec les configurations nécessaires."""
         try:
             if "OPENAI_API_KEY" not in st.secrets:
                 st.error("Clé API manquante dans les secrets Streamlit")
                 raise ValueError("Clé API manquante")
             
             self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-            self.model = "gpt-4o-mini"
-            self.csrd_data = load_csrd_documents()  # Chargement direct des documents
+            self.model = "gpt-4-1106-preview"  # Modèle le plus récent avec JSON mode
+            self.csrd_data = load_csrd_documents()
             
             # Structure d'évaluation ESRS
             self.evaluation_criteria = {
@@ -105,19 +160,26 @@ class CSRDReportAnalyzer:
                     "business_conduct": ["ESRS G1"]
                 }
             }
+            
+            if not self.csrd_data:
+                raise ValueError("Impossible de charger les documents CSRD")
+                
         except Exception as e:
             raise Exception(f"Erreur d'initialisation: {str(e)}")
 
-    def analyze_report(self, text: str, company_info: Dict[str, Any], csrd_regulation: str) -> Dict[str, Any]:
-        """Analyse un rapport selon les critères CSRD."""
+    def analyze_report(self, text: str, company_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyse un rapport selon les critères CSRD.
+        Args:
+            text (str): Texte du rapport à analyser
+            company_info (Dict): Informations sur l'entreprise
+        Returns:
+            Dict: Résultats de l'analyse
+        """
         if not text:
-            raise ValueError("Erreur: Le texte du rapport est vide")
+            raise ValueError("Le texte du rapport est vide")
             
         try:
-            # Log pour debug et vérification
-            st.write(f"Analyse du rapport pour: {company_info['name']}")
-            st.write(f"Longueur du texte: {len(text)} caractères")
-            
             # Structure de base des résultats
             analysis_results = {
                 "analysis": {},
@@ -148,27 +210,24 @@ class CSRDReportAnalyzer:
                     "axes_amelioration": section_results["compliance"].get("non_conforming", [])
                 }
                 
-                # Calculer le score global
+                # Mise à jour du score global et des non-conformités
                 total_score += section_results.get("score", 0)
-                
-                # Agréger les non-conformités
                 analysis_results["conformite"]["non_conformites"].extend(
                     section_results["compliance"].get("non_conforming", [])
                 )
                 
-                # Agréger les recommandations
-                analysis_results["recommendations"].extend(
-                    section_results.get("recommendations", [])
-                )
+                # Ajouter les recommandations
+                if "recommendations" in section_results:
+                    analysis_results["recommendations"].extend(section_results["recommendations"])
             
-            # Calculer le score global moyen
-            analysis_results["conformite"]["score_global"] = total_score / len(sections)
+            # Calcul du score global
+            analysis_results["conformite"]["score_global"] = round(total_score / len(sections), 1)
             analysis_results["conformite"]["evaluation"] = (
-                f"Score global de conformité: {analysis_results['conformite']['score_global']:.1f}/100. "
+                f"Score global de conformité: {analysis_results['conformite']['score_global']}/100. "
                 f"{len(analysis_results['conformite']['non_conformites'])} non-conformités identifiées."
             )
 
-            # Enrichir avec les métadonnées
+            # Ajout des métadonnées
             analysis_results["metadata"] = {
                 "company_info": company_info,
                 "analysis_date": datetime.now().isoformat(),
@@ -183,47 +242,25 @@ class CSRDReportAnalyzer:
             raise Exception(f"Échec de l'analyse: {str(e)}")
 
     def _analyze_section(self, text: str, section: str, company_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyse une section spécifique du rapport."""
-        # Préparer le contexte réglementaire
-        regulatory_context = self._get_section_context(section)
-        criteria = self.evaluation_criteria[section]
-
-        # Créer le prompt
-        prompt = f"""Analyser la section {section} selon les normes ESRS.
-
-CONTEXTE ENTREPRISE:
-{json.dumps(company_info, indent=2)}
-
-RÉFÉRENTIEL ESRS APPLICABLE:
-{regulatory_context[:2000]}
-
-CRITÈRES D'ÉVALUATION:
-{json.dumps(criteria, indent=2)}
-
-TEXTE À ANALYSER:
-{text[:8000]}
-
-FORMAT DE RÉPONSE (JSON):
-{{
-    "score": float,  # Score global (0-100)
-    "evaluation": string,  # Évaluation générale
-    "standards_analysis": {{  # Analyse par standard ESRS
-        "standard_id": {{
-            "score": float,
-            "conformity": string,
-            "findings": [string],
-            "evidence": [string]
-        }}
-    }},
-    "compliance": {{
-        "conforming": [string],
-        "non_conforming": [string],
-        "partially_conforming": [string]
-    }},
-    "recommendations": [string]
-}}"""
-
+        """
+        Analyse une section spécifique du rapport.
+        Args:
+            text (str): Texte du rapport
+            section (str): Section à analyser
+            company_info (Dict): Informations sur l'entreprise
+        Returns:
+            Dict: Résultats de l'analyse de la section
+        """
         try:
+            section_analyzer = SectionAnalyzer(section, self.evaluation_criteria)
+            regulatory_context = get_regulatory_context(self.csrd_data, section)
+            
+            prompt = section_analyzer.create_analysis_prompt(
+                text=text,
+                company_info=company_info,
+                regulatory_context=regulatory_context
+            )
+
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -257,20 +294,3 @@ FORMAT DE RÉPONSE (JSON):
                 },
                 "recommendations": []
             }
-
-    def _get_section_context(self, section: str) -> str:
-        """Récupère le contexte réglementaire pour une section."""
-        if not self.csrd_data:
-            return ""
-
-        relevant_texts = []
-
-        # Ajouter les textes cross-cutting
-        if "cross_cutting" in self.csrd_data:
-            relevant_texts.extend(self.csrd_data["cross_cutting"].values())
-
-        # Ajouter les textes spécifiques à la section
-        if section in self.csrd_data:
-            relevant_texts.extend(self.csrd_data[section].values())
-
-        return "\n\n---\n\n".join(relevant_texts)
