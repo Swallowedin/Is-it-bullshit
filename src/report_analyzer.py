@@ -139,7 +139,7 @@ class CSRDReportAnalyzer:
                 raise ValueError("Clé API manquante")
             
             self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-            self.model = "gpt-4-1106-preview"  # Modèle le plus récent avec JSON mode
+            self.model = "gpt-4o-mini"  # Modèle le plus récent avec JSON mode
             self.csrd_data = load_csrd_documents()
             
             # Structure d'évaluation ESRS
