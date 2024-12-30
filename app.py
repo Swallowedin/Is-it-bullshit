@@ -161,10 +161,109 @@ def main():
 
     # Gestion des pages
     if page == "Analyse CSRD":
-        [Le reste du code de la page Analyse CSRD]
+        # Initialisation du state si nécessaire
+        if 'analysis_completed' not in st.session_state:
+            st.session_state.analysis_completed = False
+        if 'analysis_results' not in st.session_state:
+            st.session_state.analysis_results = None
+        if 'current_company_info' not in st.session_state:
+            st.session_state.current_company_info = None
+
+        st.title("Analyse de rapport CSRD/DPEF")
+        
+        # Reset le state si nécessaire
+        def reset_analysis_state():
+            st.session_state.analysis_completed = False
+            st.session_state.analysis_results = None
+        
+        # Interface d'upload
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            company_name = st.text_input("Nom de l'entreprise", 
+                                       on_change=reset_analysis_state)
+            if company_name:
+                company_info = get_company_context(company_name)
+                st.session_state.current_company_info = company_info
+        
+        with col2:
+            uploaded_file = st.file_uploader("Rapport CSRD/DPEF (PDF)", 
+                                           type="pdf",
+                                           on_change=reset_analysis_state)
+        
+        # Messages de guidage
+        if not company_name:
+            st.info("👆 Commencez par entrer le nom de l'entreprise")
+        elif not uploaded_file:
+            st.info("👆 Uploadez maintenant le rapport PDF à analyser")
+        
+        # Zone du bouton d'analyse
+        st.markdown("---")
+        analyze_col1, analyze_col2, analyze_col3 = st.columns([1, 2, 1])
+        
+        with analyze_col2:
+            if uploaded_file and company_name and not st.session_state.analysis_completed:
+                if st.button("🔍 Lancer l'analyse CSRD", use_container_width=True, key="start_analysis"):
+                    with st.spinner("Analyse CSRD en cours..."):
+                        # Extraction du texte du PDF
+                        text = extract_text_from_pdf(uploaded_file)
+                        
+                        if text:
+                            # Chargement des documents ESRS
+                            with st.spinner("Chargement des documents ESRS..."):
+                                csrd_docs = load_csrd_documents()
+                                if not csrd_docs:
+                                    st.error("Erreur lors du chargement des documents ESRS")
+                                    return
+                                
+                                # Obtenir le contexte réglementaire complet
+                                regulatory_context = get_regulatory_context(csrd_docs, "general")
+                                
+                                # Lancer l'analyse avec le contexte ESRS
+                                with st.spinner("Analyse en cours..."):
+                                    analysis_results = st.session_state.analyzer.analyze_report(
+                                        text=text,
+                                        company_info=company_info,
+                                        csrd_regulation=regulatory_context
+                                    )
+                                    
+                                    st.session_state.analysis_results = analysis_results
+                                    st.session_state.analysis_completed = True
+                                    st.rerun()
+        
+        st.markdown("---")
+        
+        # Affichage des résultats
+        if st.session_state.analysis_completed and st.session_state.analysis_results:
+            analysis_results = st.session_state.analysis_results
+            company_info = st.session_state.current_company_info
+            
+            # Affichage des résultats
+            display_csrd_analysis(analysis_results)
+            
+            # Export et nouvelle analyse
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📄 Générer rapport détaillé", key="gen_pdf"):
+                    report_pdf = generate_detailed_report(analysis_results, company_info)
+                    if report_pdf:
+                        st.download_button(
+                            "⬇️ Télécharger le rapport PDF",
+                            data=report_pdf,
+                            file_name=f"analyse_csrd_{company_name}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf",
+                            key="download_pdf"
+                        )
+            
+            with col2:
+                if st.button("🔄 Nouvelle analyse", key="new_analysis"):
+                    reset_analysis_state()
+                    st.rerun()
+
     elif page == "Dashboard":
         st.title("Dashboard CSRD")
         st.info("Dashboard en cours de développement")
+        
     else:  # Historique
         st.title("Historique des analyses")
         st.info("Historique en cours de développement")
