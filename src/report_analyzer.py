@@ -63,9 +63,26 @@ class CSRDReportAnalyzer:
             
             self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
             self.model = "gpt-4o-mini"
+            self.csrd_data = load_csrd_documents()  # Chargement direct des documents
             
-            self.csrd_criteria = {
-                # [Critères inchangés]
+            # Structure d'évaluation ESRS
+            self.evaluation_criteria = {
+                "environmental": {
+                    "climate": ["ESRS E1"],
+                    "pollution": ["ESRS E2"],
+                    "water": ["ESRS E3"],
+                    "biodiversity": ["ESRS E4"],
+                    "circular_economy": ["ESRS E5"]
+                },
+                "social": {
+                    "workforce": ["ESRS S1"],
+                    "communities": ["ESRS S2"],
+                    "affected_people": ["ESRS S3"],
+                    "consumers": ["ESRS S4"]
+                },
+                "governance": {
+                    "business_conduct": ["ESRS G1"]
+                }
             }
         except Exception as e:
             raise Exception(f"Erreur d'initialisation: {str(e)}")
@@ -80,38 +97,6 @@ class CSRDReportAnalyzer:
             st.write(f"Analyse du rapport pour: {company_info['name']}")
             st.write(f"Longueur du texte: {len(text)} caractères")
             
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": """Tu es un expert en analyse CSRD/DPEF.
-                    Analyse UNIQUEMENT le contenu fourni, sans faire de suppositions.
-                    Si tu ne peux pas analyser le contenu, tu DOIS retourner une erreur."""},
-                    {"role": "user", "content": self._create_analysis_prompt(text, company_info, csrd_regulation)}
-                ],
-                temperature=0.5,
-                max_tokens=4000,
-                response_format={"type": "json_object"}
-            )
-            
-            results = json.loads(response.choices[0].message.content)
-            
-            # Validation stricte des résultats
-            if not results or not results.get("analysis"):
-                raise ValueError("L'analyse n'a pas produit de résultats valides")
-                
-            return results
-                
-        except Exception as e:
-            raise Exception(f"Échec de l'analyse: {str(e)}")
-    def analyze_report(self, text: str, company_info: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Analyse complète d'un rapport selon les normes ESRS.
-        
-        Args:
-            text: Texte du rapport
-            company_info: Informations sur l'entreprise
-        """
-        try:
             # Analyse par section ESRS
             sections = ["environmental", "social", "governance"]
             results = {}
@@ -132,11 +117,13 @@ class CSRDReportAnalyzer:
                 company_info=company_info
             )
 
+            if not final_results or not final_results.get("analysis"):
+                raise ValueError("L'analyse n'a pas produit de résultats valides")
+                
             return final_results
-
+            
         except Exception as e:
-            st.error(f"Erreur lors de l'analyse: {str(e)}")
-            return self._get_demo_analysis()
+            raise Exception(f"Échec de l'analyse: {str(e)}")
 
     def _analyze_section(self, text: str, section: str, company_info: Dict[str, Any]) -> Dict[str, Any]:
         """Analyse une section spécifique du rapport."""
