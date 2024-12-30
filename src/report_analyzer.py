@@ -118,32 +118,68 @@ class CSRDReportAnalyzer:
             st.write(f"Analyse du rapport pour: {company_info['name']}")
             st.write(f"Longueur du texte: {len(text)} caractères")
             
+            # Structure de base des résultats
+            analysis_results = {
+                "analysis": {},
+                "conformite": {
+                    "score_global": 0,
+                    "evaluation": "",
+                    "non_conformites": []
+                },
+                "recommendations": []
+            }
+            
             # Analyse par section ESRS
             sections = ["environmental", "social", "governance"]
-            results = {}
-
+            total_score = 0
+            
             for section in sections:
-                results[section] = self._analyze_section(
+                section_results = self._analyze_section(
                     text=text,
                     section=section,
                     company_info=company_info
                 )
-
-            # Consolider les résultats
-            final_results = self._consolidate_results(results)
+                
+                # Ajouter les résultats de la section
+                analysis_results["analysis"][section] = {
+                    "score": section_results.get("score", 0),
+                    "evaluation": section_results.get("evaluation", ""),
+                    "points_forts": section_results["compliance"].get("conforming", []),
+                    "axes_amelioration": section_results["compliance"].get("non_conforming", [])
+                }
+                
+                # Calculer le score global
+                total_score += section_results.get("score", 0)
+                
+                # Agréger les non-conformités
+                analysis_results["conformite"]["non_conformites"].extend(
+                    section_results["compliance"].get("non_conforming", [])
+                )
+                
+                # Agréger les recommandations
+                analysis_results["recommendations"].extend(
+                    section_results.get("recommendations", [])
+                )
             
-            # Enrichir avec les métadonnées
-            final_results = self._enrich_results(
-                results=final_results,
-                company_info=company_info
+            # Calculer le score global moyen
+            analysis_results["conformite"]["score_global"] = total_score / len(sections)
+            analysis_results["conformite"]["evaluation"] = (
+                f"Score global de conformité: {analysis_results['conformite']['score_global']:.1f}/100. "
+                f"{len(analysis_results['conformite']['non_conformites'])} non-conformités identifiées."
             )
 
-            if not final_results or not final_results.get("analysis"):
-                raise ValueError("L'analyse n'a pas produit de résultats valides")
-                
-            return final_results
+            # Enrichir avec les métadonnées
+            analysis_results["metadata"] = {
+                "company_info": company_info,
+                "analysis_date": datetime.now().isoformat(),
+                "version_csrd": "2024",
+                "score_global": analysis_results["conformite"]["score_global"]
+            }
+
+            return analysis_results
             
         except Exception as e:
+            st.error(f"Erreur détaillée de l'analyse: {str(e)}")
             raise Exception(f"Échec de l'analyse: {str(e)}")
 
     def _analyze_section(self, text: str, section: str, company_info: Dict[str, Any]) -> Dict[str, Any]:
@@ -202,7 +238,11 @@ FORMAT DE RÉPONSE (JSON):
                 response_format={"type": "json_object"}
             )
 
-            return json.loads(response.choices[0].message.content)
+            results = json.loads(response.choices[0].message.content)
+            if not results or not isinstance(results, dict):
+                raise ValueError(f"Réponse invalide pour la section {section}")
+                
+            return results
 
         except Exception as e:
             st.error(f"Erreur lors de l'analyse de la section {section}: {str(e)}")
@@ -234,116 +274,3 @@ FORMAT DE RÉPONSE (JSON):
             relevant_texts.extend(self.csrd_data[section].values())
 
         return "\n\n---\n\n".join(relevant_texts)
-
-    def _consolidate_results(self, section_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Consolide les résultats de toutes les sections."""
-        total_score = 0
-        weights = {
-            "environmental": 0.4,
-            "social": 0.3,
-            "governance": 0.3
-        }
-
-        consolidated = {
-            "global_score": 0,
-            "section_scores": {},
-            "detailed_analysis": section_results,
-            "compliance_summary": {
-                "conforming": [],
-                "non_conforming": [],
-                "partially_conforming": []
-            },
-            "key_findings": [],
-            "recommendations": []
-        }
-
-        # Calculer les scores
-        for section, results in section_results.items():
-            score = results.get("score", 0)
-            weight = weights.get(section, 0)
-            weighted_score = score * weight
-            total_score += weighted_score
-
-            consolidated["section_scores"][section] = {
-                "score": score,
-                "weighted_score": weighted_score,
-                "weight": weight
-            }
-
-            # Agréger les recommandations et non-conformités
-            consolidated["recommendations"].extend(results.get("recommendations", []))
-            if "compliance" in results:
-                consolidated["compliance_summary"]["conforming"].extend(
-                    results["compliance"].get("conforming", [])
-                )
-                consolidated["compliance_summary"]["non_conforming"].extend(
-                    results["compliance"].get("non_conforming", [])
-                )
-                consolidated["compliance_summary"]["partially_conforming"].extend(
-                    results["compliance"].get("partially_conforming", [])
-                )
-
-        consolidated["global_score"] = round(total_score, 2)
-        
-        return consolidated
-
-    def _enrich_results(self, results: Dict[str, Any], company_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Enrichit les résultats avec des métadonnées et analyses supplémentaires."""
-        results["metadata"] = {
-            "company_info": company_info,
-            "analysis_date": datetime.now().isoformat(),
-            "esrs_version": "2024",
-            "analyzer_version": "2.0"
-        }
-
-        # Ajouter des statistiques
-        results["statistics"] = {
-            "total_conforming": len(results["compliance_summary"]["conforming"]),
-            "total_non_conforming": len(results["compliance_summary"]["non_conforming"]),
-            "total_partial": len(results["compliance_summary"]["partially_conforming"]),
-            "total_recommendations": len(results["recommendations"])
-        }
-
-        # Ajouter un résumé exécutif
-        results["executive_summary"] = self._generate_summary(results)
-
-        return results
-
-    def _generate_summary(self, results: Dict[str, Any]) -> str:
-        """Génère un résumé exécutif des résultats."""
-        return f"""Analyse ESRS - Score global: {results['global_score']}/100
-
-Performance par section:
-- Environnement: {results['section_scores']['environmental']['score']}/100
-- Social: {results['section_scores']['social']['score']}/100
-- Gouvernance: {results['section_scores']['governance']['score']}/100
-
-Points d'attention:
-- {len(results['compliance_summary']['non_conforming'])} non-conformités identifiées
-- {len(results['compliance_summary']['partially_conforming'])} conformités partielles
-- {len(results['recommendations'])} recommandations d'amélioration"""
-
-    def _get_demo_analysis(self) -> Dict[str, Any]:
-        """Retourne une analyse de démonstration."""
-        return {
-            "global_score": 75.5,
-            "section_scores": {
-                "environmental": {"score": 80, "weighted_score": 32, "weight": 0.4},
-                "social": {"score": 70, "weighted_score": 21, "weight": 0.3},
-                "governance": {"score": 75, "weighted_score": 22.5, "weight": 0.3}
-            },
-            "compliance_summary": {
-                "conforming": ["ESRS E1.1", "ESRS S1.1"],
-                "non_conforming": ["ESRS E2.3"],
-                "partially_conforming": ["ESRS G1.2"]
-            },
-            "recommendations": [
-                "Renforcer le reporting sur les émissions scope 3",
-                "Améliorer la traçabilité des données sociales"
-            ],
-            "metadata": {
-                "analysis_date": datetime.now().isoformat(),
-                "esrs_version": "2024",
-                "analyzer_version": "2.0"
-            }
-        }
