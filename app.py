@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -6,9 +5,9 @@ from datetime import datetime
 from pathlib import Path
 import json
 import PyPDF2
-from openai import OpenAI
+import io
 from typing import Dict, Any
-from src.report_analyzer import CSRDReportAnalyzer, load_csrd_documents
+from src.report_analyzer import CSRDReportAnalyzer, load_csrd_documents, get_regulatory_context
 
 # Configuration de la page
 st.set_page_config(
@@ -18,84 +17,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Lecture et cache de la réglementation CSRD
-@st.cache_data
-def load_csrd_documents():
-    """Charge les documents CSRD/ESRS"""
-    try:
-        base_path = Path("data/csrd")
-        csrd_data = {
-            "environmental": {},  # ESRS E1-E5
-            "social": {},        # ESRS S1-S4
-            "governance": {},    # ESRS G1
-            "cross_cutting": {}, # ESRS 1-2
-            "annexes": {},       # Documents annexes
-            "precisions": {}     # Précisions et Q&A
-        }
-        
-        # Parcourir tous les fichiers du dossier general
-        general_path = base_path / "general"
-        if general_path.exists():
-            for file_path in general_path.glob("*.txt"):
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        
-                        # Catégoriser les fichiers selon leur préfixe
-                        name = file_path.stem
-                        if name.startswith("ESRS_E"):
-                            csrd_data["environmental"][name] = content
-                        elif name.startswith("ESRS_S"):
-                            csrd_data["social"][name] = content
-                        elif name.startswith("ESRS_G"):
-                            csrd_data["governance"][name] = content
-                        elif name.startswith("ESRS") and name[4].isdigit():
-                            csrd_data["cross_cutting"][name] = content
-                        elif name.startswith("ANNEXE"):
-                            csrd_data["annexes"][name] = content
-                        elif name in ["Questions_réponses", "precisions_esrs"]:
-                            csrd_data["precisions"][name] = content
-                        
-                except Exception as e:
-                    st.error(f"Erreur lors de la lecture de {file_path}: {str(e)}")
-        
-        # Vérifier le chargement
-        total_docs = sum(len(files) for files in csrd_data.values())
-        if total_docs == 0:
-            st.warning("Aucun document ESRS trouvé dans data/csrd/general")
-        else:
-            st.success(f"{total_docs} documents ESRS chargés :\n" + 
-                      f"- Environmental: {len(csrd_data['environmental'])} docs\n" +
-                      f"- Social: {len(csrd_data['social'])} docs\n" +
-                      f"- Governance: {len(csrd_data['governance'])} docs\n" +
-                      f"- Cross-cutting: {len(csrd_data['cross_cutting'])} docs")
-        
-        return csrd_data
-
-    except Exception as e:
-        st.error(f"Erreur lors du chargement des documents ESRS: {str(e)}")
-        return None
-
-def get_regulatory_context(csrd_data: Dict[str, Dict[str, str]], section: str) -> str:
-    """Récupère le contexte réglementaire pour une section donnée."""
-    if not csrd_data:
-        return ""
-        
-    relevant_docs = []
-    
-    # Ajouter les documents cross-cutting
-    if section in ["environmental", "social", "governance"]:
-        relevant_docs.extend(csrd_data["cross_cutting"].values())
-    
-    # Ajouter les documents spécifiques à la section
-    if section in csrd_data:
-        relevant_docs.extend(csrd_data[section].values())
-    
-    # Ajouter les précisions pertinentes
-    if "precisions" in csrd_data:
-        relevant_docs.extend(csrd_data["precisions"].values())
-        
-    return "\n\n---\n\n".join(relevant_docs)
 def extract_text_from_pdf(pdf_file):
     """Extrait le texte d'un fichier PDF."""
     text = ""
@@ -116,218 +37,58 @@ def get_company_context(company_name):
         "size": "Non spécifiée"
     }
 
-class CSRDReportAnalyzer:
-    """Analyseur de rapports CSRD avec évaluation détaillée."""
+def generate_detailed_report(analysis_results: Dict[str, Any], company_info: Dict[str, Any]):
+    """Génère un rapport PDF détaillé."""
+    from fpdf import FPDF
     
-    def __init__(self):
-        try:
-            if "OPENAI_API_KEY" not in st.secrets:
-                st.error("Clé API manquante dans les secrets Streamlit")
-                raise ValueError("Clé API manquante")
-            
-            self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-            self.model = "gpt-4o-mini"
-            
-            self.csrd_criteria = {
-                "gouvernance": {
-                    "supervision": ["Rôle du conseil d'administration", "Comités spécialisés"],
-                    "management": ["Intégration dans la stratégie", "Objectifs et indicateurs"],
-                    "politique_remuneration": ["Lien avec la durabilité", "Critères ESG"]
-                },
-                "strategie": {
-                    "analyse_materialite": ["Identification des risques", "Double matérialité"],
-                    "plan_transition": ["Objectifs climatiques", "Alignement Paris"],
-                    "resilience": ["Scénarios climatiques", "Adaptation"]
-                },
-                "gestion_risques": {
-                    "identification": ["Processus", "Méthodologie"],
-                    "integration": ["Chaîne de valeur", "Impacts directs/indirects"],
-                    "mitigation": ["Mesures prises", "Suivi"]
-                },
-                "indicateurs": {
-                    "environnement": ["Émissions GES", "Biodiversité", "Eau", "Économie circulaire"],
-                    "social": ["Droits humains", "Conditions de travail", "Formation"],
-                    "gouvernance": ["Éthique", "Corruption", "Transparence"]
-                }
-            }
-        except Exception as e:
-            raise Exception(f"Erreur d'initialisation: {str(e)}")
+    class PDF(FPDF):
+        def header(self):
+            self.set_font('Arial', 'B', 15)
+            self.cell(0, 10, "Rapport d'analyse CSRD/DPEF", 0, 1, 'C')
+            self.ln(10)
 
-  def analyze_report(self, text: str, company_info: Dict[str, Any], csrd_regulation: str) -> Dict[str, Any]:
-    """Analyse un rapport selon les critères CSRD."""
-    if not text:
-        raise ValueError("Erreur: Le texte du rapport est vide")
-        
     try:
-        # Log pour debug et vérification
-        st.write(f"Analyse du rapport pour: {company_info['name']}")
-        st.write(f"Longueur du texte: {len(text)} caractères")
+        pdf = PDF()
+        pdf.add_page()
         
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": """Tu es un expert en analyse CSRD/DPEF.
-                Analyse UNIQUEMENT le contenu fourni, sans faire de suppositions.
-                Si tu ne peux pas analyser le contenu, tu DOIS retourner une erreur."""},
-                {"role": "user", "content": self._create_analysis_prompt(text, company_info, csrd_regulation)}
-            ],
-            temperature=0.5,
-            max_tokens=4000,
-            response_format={"type": "json_object"}
-        )
+        # En-tête
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, f"Entreprise: {company_info['name']}", 0, 1)
+        pdf.cell(0, 10, f"Date: {datetime.now().strftime('%d/%m/%Y')}", 0, 1)
         
-        results = json.loads(response.choices[0].message.content)
-        
-        # Validation stricte des résultats
-        if not results or not results.get("analysis"):
-            raise ValueError("L'analyse n'a pas produit de résultats valides")
+        # Sections d'analyse
+        sections = ["gouvernance", "strategie", "gestion_risques", "indicateurs"]
+        for section in sections:
+            data = analysis_results["analysis"][section]
             
-        return results
+            pdf.ln(5)
+            pdf.set_font('Arial', 'B', 12)
+            pdf.cell(0, 10, section.replace('_', ' ').title(), 0, 1)
             
+            pdf.set_font('Arial', '', 11)
+            pdf.cell(0, 10, f"Score: {data['score']:.1f}/100", 0, 1)
+            pdf.multi_cell(0, 10, data['evaluation'])
+            
+            pdf.cell(0, 10, "Points forts:", 0, 1)
+            for point in data['points_forts']:
+                pdf.multi_cell(0, 10, "- " + point)
+            
+            pdf.cell(0, 10, "Axes d'amelioration:", 0, 1)
+            for point in data['axes_amelioration']:
+                pdf.multi_cell(0, 10, "- " + point)
+        
+        # Créer un buffer en mémoire
+        pdf_buffer = io.BytesIO()
+        pdf.output(pdf_buffer)
+        
+        # Retourner les bytes du buffer
+        pdf_bytes = pdf_buffer.getvalue()
+        pdf_buffer.close()
+        return pdf_bytes
+        
     except Exception as e:
-        raise Exception(f"Échec de l'analyse: {str(e)}")
-
-    def _create_analysis_prompt(self, text: str, company_info: Dict[str, Any], csrd_regulation: str) -> str:
-        """Crée le prompt d'analyse détaillé."""
-        return f"""Analyse ce rapport CSRD/DPEF selon la réglementation suivante:
-
-RÉGLEMENTATION CSRD:
-{csrd_regulation[:2000]}...
-
-ENTREPRISE:
-- Nom: {company_info['name']}
-- Secteur: {company_info['sector']}
-- Taille: {company_info['size']}
-
-RAPPORT:
-{text[:8000]}...
-
-CONSIGNES:
-Réaliser une analyse détaillée selon les critères suivants:
-
-1. GOUVERNANCE
-- Supervision et management
-- Intégration de la durabilité
-- Politique de rémunération
-
-2. STRATÉGIE
-- Analyse de matérialité
-- Plan de transition
-- Résilience climatique
-
-3. GESTION DES RISQUES
-- Identification
-- Intégration
-- Mitigation
-
-4. INDICATEURS
-- Environnementaux
-- Sociaux
-- Gouvernance
-
-FORMAT DE RÉPONSE (JSON):
-{
-    "analysis": {
-        "gouvernance": {
-            "score": X,
-            "evaluation": "...",
-            "points_forts": [],
-            "axes_amelioration": []
-        },
-        "strategie": {
-            "score": X,
-            "evaluation": "...",
-            "points_forts": [],
-            "axes_amelioration": []
-        },
-        "gestion_risques": {
-            "score": X,
-            "evaluation": "...",
-            "points_forts": [],
-            "axes_amelioration": []
-        },
-        "indicateurs": {
-            "score": X,
-            "evaluation": "...",
-            "points_forts": [],
-            "axes_amelioration": []
-        }
-    },
-    "conformite": {
-        "score_global": X,
-        "evaluation": "...",
-        "non_conformites": []
-    },
-    "recommandations": [],
-    "sources": []
-}"""
-
-    def _validate_and_enhance_results(self, results: Dict[str, Any]) -> Dict[str, Any]:
-        """Valide et enrichit les résultats."""
-        # Calcul score global
-        section_scores = [
-            results["analysis"][section]["score"]
-            for section in ["gouvernance", "strategie", "gestion_risques", "indicateurs"]
-        ]
-        global_score = sum(section_scores) / len(section_scores)
-        
-        # Ajout métadonnées
-        results["metadata"] = {
-            "date_analyse": datetime.now().isoformat(),
-            "version_csrd": "2024",
-            "score_global": global_score
-        }
-        
-        return results
-
-    def _get_demo_analysis(self) -> Dict[str, Any]:
-        """Retourne une analyse de démonstration."""
-        return {
-            "analysis": {
-                "gouvernance": {
-                    "score": 75,
-                    "evaluation": "Bonne intégration de la durabilité",
-                    "points_forts": ["Comité RSE actif"],
-                    "axes_amelioration": ["Renforcer le lien rémunération-RSE"]
-                },
-                "strategie": {
-                    "score": 70,
-                    "evaluation": "Stratégie climat définie",
-                    "points_forts": ["Objectifs 2030 fixés"],
-                    "axes_amelioration": ["Préciser les jalons"]
-                },
-                "gestion_risques": {
-                    "score": 80,
-                    "evaluation": "Processus robuste",
-                    "points_forts": ["Cartographie détaillée"],
-                    "axes_amelioration": ["Améliorer le suivi"]
-                },
-                "indicateurs": {
-                    "score": 85,
-                    "evaluation": "KPIs bien définis",
-                    "points_forts": ["Scope 3 calculé"],
-                    "axes_amelioration": ["Ajouter biodiversité"]
-                }
-            },
-            "conformite": {
-                "score_global": 77.5,
-                "evaluation": "Bonne conformité générale",
-                "non_conformites": []
-            },
-            "recommandations": [
-                "Renforcer les objectifs biodiversité",
-                "Améliorer le reporting scope 3"
-            ],
-            "sources": [
-                "Rapport annuel",
-                "Documentation CSRD"
-            ],
-            "metadata": {
-                "date_analyse": datetime.now().isoformat(),
-                "version_csrd": "2024",
-                "score_global": 77.5
-            }
-        }
+        st.error(f"Erreur lors de la generation du PDF: {str(e)}")
+        return None
 
 def display_csrd_analysis(analysis_results: Dict[str, Any]):
     """Affiche les résultats de l'analyse CSRD."""
@@ -374,41 +135,32 @@ def display_csrd_analysis(analysis_results: Dict[str, Any]):
         for point in analysis_results['conformite']['non_conformites']:
             st.markdown(f"⚠️ {point}")
 
-# Dans la partie affichage des résultats
-if st.button("📄 Générer rapport détaillé"):
-    with st.spinner("Génération du rapport PDF..."):
-        report_pdf = generate_detailed_report(analysis_results, company_info)
-        if report_pdf:
-            st.download_button(
-                label="⬇️ Télécharger le rapport PDF",
-                data=report_pdf,
-                file_name=f"analyse_csrd_{company_info['name']}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf"
-            )
-        
 def main():
-   # Initialisation de l'analyseur
-   if 'analyzer' not in st.session_state:
-       try:
-           st.session_state.analyzer = CSRDReportAnalyzer()  # Modifié ici pour utiliser CSRDReportAnalyzer
-       except Exception as e:
-           st.error(f"Erreur d'initialisation: {str(e)}")
-           return
+    # Initialisation de l'analyseur
+    if 'analyzer' not in st.session_state:
+        try:
+            st.session_state.analyzer = CSRDReportAnalyzer()
+        except Exception as e:
+            st.error(f"Erreur d'initialisation: {str(e)}")
+            return
 
-   # Sidebar 
-   with st.sidebar:
-       st.title("Is it Bullshit?")
-       
-       # Navigation
-       page = st.radio(
-           "Navigation",
-           ["Analyse CSRD", "Dashboard", "Historique"]
-       )
-       
-       # Filtres globaux
-       st.subheader("Filtres")
-       sector = st.selectbox("Secteur", ["Tous", "Industrie", "Services", "Énergie"])
-       year = st.selectbox("Année", list(range(2024, 2020, -1)))
+    # Sidebar 
+    with st.sidebar:
+        st.title("Is it Bullshit?")
+        
+        # Navigation
+        page = st.radio(
+            "Navigation",
+            ["Analyse CSRD", "Dashboard", "Historique"]
+        )
+        
+        # Filtres globaux
+        st.subheader("Filtres")
+        sector = st.selectbox("Secteur", ["Tous", "Industrie", "Services", "Énergie"])
+        year = st.selectbox("Année", list(range(2024, 2020, -1)))
+
+    # Gestion des pages
+    if page == "Analyse CSRD":
 
    # Gestion des pages
    if page == "Analyse CSRD":
