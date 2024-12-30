@@ -8,6 +8,7 @@ import json
 import PyPDF2
 from openai import OpenAI
 from typing import Dict, Any
+from src.report_analyzer import CSRDReportAnalyzer, load_csrd_documents
 
 # Configuration de la page
 st.set_page_config(
