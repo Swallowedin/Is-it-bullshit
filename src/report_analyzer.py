@@ -52,6 +52,27 @@ def load_csrd_documents():
         st.error(f"Erreur lors du chargement des documents ESRS: {str(e)}")
         return None
 
+def get_regulatory_context(csrd_data: Dict[str, Dict[str, str]], section: str) -> str:
+    """Récupère le contexte réglementaire pour une section donnée."""
+    if not csrd_data:
+        return ""
+        
+    relevant_docs = []
+    
+    # Ajouter les documents cross-cutting
+    if section in ["environmental", "social", "governance"]:
+        relevant_docs.extend(csrd_data["cross_cutting"].values())
+    
+    # Ajouter les documents spécifiques à la section
+    if section in csrd_data:
+        relevant_docs.extend(csrd_data[section].values())
+    
+    # Ajouter les précisions pertinentes
+    if "precisions" in csrd_data:
+        relevant_docs.extend(csrd_data["precisions"].values())
+        
+    return "\n\n---\n\n".join(relevant_docs)
+
 class CSRDReportAnalyzer:
     """Analyseur de rapports CSRD avec évaluation détaillée."""
     
